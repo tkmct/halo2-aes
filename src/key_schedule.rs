@@ -7,19 +7,24 @@
 //!
 //! Key expansion
 
+use aes::cipher::consts::U8;
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     halo2curves::bn256::Fr as Fp,
     plonk::{Advice, Column, ConstraintSystem, Error, Fixed, Selector},
+    poly::Rotation,
 };
 
-use crate::utils::{get_round_constant, rotate_word, sub_word, xor_bytes, xor_words};
+use crate::{
+    u8_xor_table::U8XorTableConfig,
+    utils::{get_round_constant, rotate_word, sub_word, xor_bytes, xor_words},
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Aes128KeyScheduleConfig {
     // range_config: RangeConfig,
     // sub_bytes_config: SubBytesConfig,
-    // u8_xor_config: U8XorConfig,
+    u8_xor_table_config: U8XorTableConfig,
 
     // Store words as u8 value
     words_column: Column<Advice>,
@@ -55,7 +60,25 @@ impl Aes128KeyScheduleConfig {
         let q_sub_bytes = meta.selector();
         let q_rot = meta.selector();
         let q_round_first = meta.selector();
-        let q_round_mid = meta.selector();
+        let q_round_mid = meta.complex_selector();
+
+        let u8_xor_table_config = U8XorTableConfig::configure(meta);
+
+        // TODO: First words of each round
+        for i in 0..4 {
+            meta.lookup("Mid words of each round", |meta| {
+                let q = meta.query_selector(q_round_mid);
+                let new_word = meta.query_advice(words_column, Rotation(i));
+                let prev_word = meta.query_advice(words_column, Rotation(i - 4));
+                let prev_round_word = meta.query_advice(words_column, Rotation(i - 16));
+
+                vec![
+                    (q.clone() * prev_word, u8_xor_table_config.x),
+                    (q.clone() * prev_round_word, u8_xor_table_config.y),
+                    (q * new_word, u8_xor_table_config.z),
+                ]
+            });
+        }
 
         Self {
             words_column,
@@ -68,6 +91,7 @@ impl Aes128KeyScheduleConfig {
             q_rot,
             q_round_first,
             q_round_mid,
+            u8_xor_table_config,
         }
     }
 
@@ -96,8 +120,6 @@ impl Aes128KeyScheduleConfig {
                     }
                     words.push(inner);
                 }
-
-                // println!("Words: {:?}", words);
 
                 let mut pos = 16;
 
@@ -263,8 +285,9 @@ mod tests {
         fn synthesize(
             &self,
             config: Self::Config,
-            layouter: impl Layouter<Fp>,
+            mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
+            config.u8_xor_table_config.load(&mut layouter)?;
             config.schedule_keys(layouter, self.key)?;
             Ok(())
         }
@@ -286,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_correct_key_scheduling() {
-        let k = 10;
+        let k = 16;
         let circuit = TestCircuit { key: [0u8; 16] };
 
         let mock = MockProver::run(k, &circuit, vec![]).unwrap();
@@ -322,5 +345,15 @@ mod tests {
                     .join("");
                 assert_eq!(hex, expected);
             });
+    }
+
+    #[test]
+    #[ignore]
+    fn test_constraints() {
+        let k = 10;
+        let circuit = TestCircuit { key: [0u8; 16] };
+
+        let mock = MockProver::run(k, &circuit, vec![]).unwrap();
+        mock.assert_satisfied();
     }
 }

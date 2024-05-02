@@ -27,8 +27,8 @@ impl U8XorTableConfig {
             || "load xor table for u8",
             |mut table| {
                 let mut l = 0;
-                for i in 0..u8::MAX {
-                    for j in 0..u8::MAX {
+                for i in 0..=u8::MAX {
+                    for j in 0..=u8::MAX {
                         table.assign_cell(
                             || "assign cell for left input of XOR table",
                             self.x,

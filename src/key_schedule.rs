@@ -7,7 +7,6 @@
 //!
 //! Key expansion
 
-use aes::cipher::consts::U8;
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     halo2curves::bn256::Fr as Fp,
@@ -59,12 +58,27 @@ impl Aes128KeyScheduleConfig {
         let q_range_u8 = meta.complex_selector();
         let q_sub_bytes = meta.selector();
         let q_rot = meta.selector();
-        let q_round_first = meta.selector();
+        let q_round_first = meta.complex_selector();
         let q_round_mid = meta.complex_selector();
 
         let u8_xor_table_config = U8XorTableConfig::configure(meta);
 
-        // TODO: First words of each round
+        for i in 0..4 {
+            meta.lookup("Lookup first words of each round", |meta| {
+                // Check XOR of Rconned word and prev_round
+                let q = meta.query_selector(q_round_first);
+                let new_word = meta.query_advice(words_column, Rotation(i));
+                let rconned = meta.query_advice(rcon_column, Rotation(i));
+                let prev_round = meta.query_advice(words_column, Rotation(i - 16));
+
+                vec![
+                    (q.clone() * prev_round, u8_xor_table_config.x),
+                    (q.clone() * rconned, u8_xor_table_config.y),
+                    (q * new_word, u8_xor_table_config.z),
+                ]
+            });
+        }
+
         for i in 0..4 {
             meta.lookup("Mid words of each round", |meta| {
                 let q = meta.query_selector(q_round_mid);
@@ -102,7 +116,7 @@ impl Aes128KeyScheduleConfig {
         key: [u8; 16],
     ) -> Result<Vec<Vec<AssignedCell<Fp, Fp>>>, Error> {
         layouter.assign_region(
-            || "Assign first four words",
+            || "Assign words",
             |mut region| {
                 // resulting words == 44 words = 176 byte
                 let mut words: Vec<Vec<AssignedCell<Fp, Fp>>> = vec![];
@@ -240,6 +254,7 @@ impl Aes128KeyScheduleConfig {
                         .iter()
                         .enumerate()
                         .map(|(j, v)| {
+                            println!("Assign word, {i} {j} at pos {} = {:?}", pos + j, v);
                             region.assign_advice(
                                 || "Assign new word",
                                 self.words_column,
@@ -309,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_correct_key_scheduling() {
-        let k = 16;
+        let k = 17;
         let circuit = TestCircuit { key: [0u8; 16] };
 
         let mock = MockProver::run(k, &circuit, vec![]).unwrap();
@@ -348,9 +363,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_constraints() {
-        let k = 10;
+        let k = 18;
         let circuit = TestCircuit { key: [0u8; 16] };
 
         let mock = MockProver::run(k, &circuit, vec![]).unwrap();

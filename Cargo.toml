@@ -3,6 +3,9 @@ name = "halo2-aes"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+dev-graph = ["halo2_proofs/dev-graph", "plotters"]
+
 [dependencies]
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0", features = [
   "derive_serde",
@@ -10,6 +13,7 @@ halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.gi
   "cost-estimator",
 ] }
 aes = "0.8.4"
+plotters = { version = "0.3.5", optional = true }
 
 
 [profile.dev]

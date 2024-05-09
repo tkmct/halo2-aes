@@ -465,4 +465,24 @@ mod tests {
         let mock = MockProver::run(k, &circuit, vec![]).unwrap();
         mock.assert_satisfied();
     }
+
+    #[cfg(feature = "dev-graph")]
+    #[test]
+    fn print_key_schedule() {
+        use plotters::prelude::*;
+
+        let k = 18;
+        let circuit = TestCircuit { key: [0u8; 16] };
+
+        let root =
+            BitMapBackend::new("prints/key-schedule-layout.png", (2048, 32768)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let root = root
+            .titled("AES128 Key schedule circuit", ("sans-serif", 60))
+            .unwrap();
+
+        halo2_proofs::dev::CircuitLayout::default()
+            .render(k, &circuit, &root)
+            .unwrap();
+    }
 }

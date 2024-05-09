@@ -357,7 +357,7 @@ mod tests {
 
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
-        dev::{CellValue, MockProver},
+        dev::{cost, CellValue, MockProver},
         halo2curves::bn256::Fr as Fp,
         plonk::{Circuit, ConstraintSystem, Error},
     };
@@ -484,5 +484,25 @@ mod tests {
         halo2_proofs::dev::CircuitLayout::default()
             .render(k, &circuit, &root)
             .unwrap();
+    }
+
+    #[cfg(feature = "cost-estimator")]
+    #[test]
+    fn cost_estimate_key_schedule() {
+        use halo2_proofs::dev::cost_model::{from_circuit_to_model_circuit, CommitmentScheme};
+
+        let k = 18;
+        let circuit = TestCircuit { key: [0u8; 16] };
+
+        let model = from_circuit_to_model_circuit::<_, _, 56, 56>(
+            k,
+            &circuit,
+            vec![],
+            CommitmentScheme::KZGGWC,
+        );
+        println!(
+            "Cost of AES128 key schedule: \n{}",
+            serde_json::to_string_pretty(&model).unwrap()
+        );
     }
 }

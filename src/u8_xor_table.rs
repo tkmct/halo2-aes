@@ -1,8 +1,7 @@
 use halo2_proofs::{
-    circuit::{AssignedCell, Layouter, Value},
+    circuit::{Layouter, Value},
     halo2curves::bn256::Fr as Fp,
-    plonk::{Advice, Column, ConstraintSystem, Error, Fixed, Selector, TableColumn},
-    poly::Rotation,
+    plonk::{ConstraintSystem, Error, TableColumn},
 };
 
 #[derive(Clone, Debug)]

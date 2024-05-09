@@ -15,6 +15,7 @@ use halo2_proofs::{
 };
 
 use crate::{
+    s_box_table::SboxTableConfig,
     u8_xor_table::U8XorTableConfig,
     utils::{get_round_constant, rotate_word, sub_word, xor_bytes, xor_words},
 };
@@ -22,7 +23,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub(crate) struct Aes128KeyScheduleConfig {
     // range_config: RangeConfig,
-    // sub_bytes_config: SubBytesConfig,
+    sbox_table_config: SboxTableConfig,
     u8_xor_table_config: U8XorTableConfig,
 
     // Store words as u8 value
@@ -56,12 +57,15 @@ impl Aes128KeyScheduleConfig {
         let round_constants = meta.fixed_column();
 
         let q_range_u8 = meta.complex_selector();
-        let q_sub_bytes = meta.selector();
+        let q_sub_bytes = meta.complex_selector();
         let q_rot = meta.selector();
         let q_round_first = meta.complex_selector();
         let q_round_mid = meta.complex_selector();
 
         let u8_xor_table_config = U8XorTableConfig::configure(meta);
+        let sbox_table_config = SboxTableConfig::configure(meta);
+
+        // TODO: Constraints value range
 
         for i in 0..4 {
             meta.lookup("Lookup first words of each round", |meta| {
@@ -77,9 +81,7 @@ impl Aes128KeyScheduleConfig {
                     (q * new_word, u8_xor_table_config.z),
                 ]
             });
-        }
 
-        for i in 0..4 {
             meta.lookup("Mid words of each round", |meta| {
                 let q = meta.query_selector(q_round_mid);
                 let new_word = meta.query_advice(words_column, Rotation(i));
@@ -94,6 +96,62 @@ impl Aes128KeyScheduleConfig {
             });
         }
 
+        // FIXME: we can constraints this by copy constraints
+        // Which is faster?
+        meta.create_gate("Rotate word", |meta| {
+            // do something
+            let q = meta.query_selector(q_rot);
+            // circuilar left shift by one byte
+            let first_byte = meta.query_advice(words_column, Rotation::cur());
+            let second_byte = meta.query_advice(words_column, Rotation(1));
+            let third_byte = meta.query_advice(words_column, Rotation(2));
+            let fourth_byte = meta.query_advice(words_column, Rotation(3));
+
+            let first_rot_byte = meta.query_advice(rot_column, Rotation::cur());
+            let second_rot_byte = meta.query_advice(rot_column, Rotation(1));
+            let third_rot_byte = meta.query_advice(rot_column, Rotation(2));
+            let fourth_rot_byte = meta.query_advice(rot_column, Rotation(3));
+
+            // Check if first_byte == fourt_rot_byte
+            //          second_byte == first_rot_byte
+            //          third_byte == second_rot_byte
+            //          fourth_byte == third_rot_byte
+            vec![
+                q.clone() * (first_byte - fourth_rot_byte),
+                q.clone() * (second_byte - first_rot_byte),
+                q.clone() * (third_byte - second_rot_byte),
+                q.clone() * (fourth_byte - third_rot_byte),
+            ]
+        });
+
+        // Constraints sub bytes
+        meta.lookup("Sub word", |meta| {
+            let q = meta.query_selector(q_sub_bytes);
+            let rot_byte = meta.query_advice(rot_column, Rotation::cur());
+            let subbed_byte = meta.query_advice(sub_bytes_column, Rotation::cur());
+
+            vec![
+                (q.clone() * rot_byte, sbox_table_config.x),
+                (q.clone() * subbed_byte, sbox_table_config.y),
+            ]
+        });
+
+        // TODO: Constraints Rcon
+        // define Rcon as fixed cell
+        // use the fixed cell and constraints xor lookup with them.
+        meta.lookup("Rcon word", |meta| {
+            let q = meta.query_selector(q_round_first);
+            let r_const = meta.query_fixed(round_constants, Rotation::cur());
+            let subbed = meta.query_advice(sub_bytes_column, Rotation::cur());
+            let rcon = meta.query_advice(rcon_column, Rotation::cur());
+
+            vec![
+                (q.clone() * r_const, u8_xor_table_config.x),
+                (q.clone() * subbed, u8_xor_table_config.y),
+                (q.clone() * rcon, u8_xor_table_config.z),
+            ]
+        });
+
         Self {
             words_column,
             sub_bytes_column,
@@ -106,6 +164,7 @@ impl Aes128KeyScheduleConfig {
             q_round_first,
             q_round_mid,
             u8_xor_table_config,
+            sbox_table_config,
         }
     }
 
@@ -135,10 +194,10 @@ impl Aes128KeyScheduleConfig {
                     words.push(inner);
                 }
 
-                let mut pos = 16;
-
                 // iterate over 4 to 44 words
+                // TODO: for each index i, should define as single region?
                 for i in 4..44 {
+                    let pos = i * 4;
                     // get cells at position (i - 4) * 4 +(0..4) -> (i-4)-th word
                     let word_prev_round = words.get(i - 4).expect("Word should be set");
                     let word_prev = words.get(i - 1).expect("Word should be set");
@@ -146,6 +205,11 @@ impl Aes128KeyScheduleConfig {
                     if i % 4 == 0 {
                         // turn on selector
                         self.q_round_first.enable(&mut region, i * 4)?;
+
+                        // Enable sub bytes selector for each byte in word
+                        for l in 0..4 {
+                            self.q_sub_bytes.enable(&mut region, i * 4 + l)?;
+                        }
 
                         // get rotated bytes and assign to rot_column
                         let rotated = rotate_word(
@@ -185,7 +249,15 @@ impl Aes128KeyScheduleConfig {
                         })
                         .collect::<Result<Vec<_>, Error>>()?;
 
+                        // Assign round constant column for first byte of the word
                         let rc = get_round_constant(i as u32 / 4 - 1);
+                        region.assign_fixed(
+                            || "Assign round constants",
+                            self.round_constants,
+                            pos,
+                            || rc,
+                        )?;
+
                         let rc_byte = xor_bytes(
                             &rc,
                             &subbed
@@ -265,7 +337,6 @@ impl Aes128KeyScheduleConfig {
                         .collect::<Result<Vec<_>, Error>>()?;
                         words.push(word);
                     }
-                    pos += 4;
                 }
 
                 Ok(words)
@@ -303,6 +374,7 @@ mod tests {
             mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
             config.u8_xor_table_config.load(&mut layouter)?;
+            config.sbox_table_config.load(&mut layouter)?;
             config.schedule_keys(layouter, self.key)?;
             Ok(())
         }

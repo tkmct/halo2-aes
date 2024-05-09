@@ -16,6 +16,7 @@ use halo2_proofs::{
 
 use crate::{
     s_box_table::SboxTableConfig,
+    u8_range_check::U8RangeCheckConfig,
     u8_xor_table::U8XorTableConfig,
     utils::{get_round_constant, rotate_word, sub_word, xor_bytes, xor_words},
 };
@@ -25,6 +26,7 @@ pub(crate) struct Aes128KeyScheduleConfig {
     // range_config: RangeConfig,
     sbox_table_config: SboxTableConfig,
     u8_xor_table_config: U8XorTableConfig,
+    range_config: U8RangeCheckConfig,
 
     // Store words as u8 value
     words_column: Column<Advice>,
@@ -64,8 +66,10 @@ impl Aes128KeyScheduleConfig {
 
         let u8_xor_table_config = U8XorTableConfig::configure(meta);
         let sbox_table_config = SboxTableConfig::configure(meta);
+        let range_config = U8RangeCheckConfig::configure(meta, words_column);
 
-        // TODO: Constraints value range
+        meta.enable_equality(words_column);
+        meta.enable_constant(round_constants);
 
         for i in 0..4 {
             meta.lookup("Lookup first words of each round", |meta| {
@@ -165,6 +169,7 @@ impl Aes128KeyScheduleConfig {
             q_round_mid,
             u8_xor_table_config,
             sbox_table_config,
+            range_config,
         }
     }
 
@@ -182,16 +187,17 @@ impl Aes128KeyScheduleConfig {
 
                 // Copy key into first 4 words
                 for i in 0..4 {
-                    let mut inner = vec![];
+                    let mut word = vec![];
                     for j in 0..4 {
-                        inner.push(region.assign_advice(
+                        let v = region.assign_advice(
                             || format!("Assign word{}_{}", i, j),
                             self.words_column,
                             i * 4 + j,
                             || Value::known(Fp::from(key[i * 4 + 1] as u64)),
-                        )?);
+                        )?;
+                        word.push(v);
                     }
-                    words.push(inner);
+                    words.push(word);
                 }
 
                 // iterate over 4 to 44 words
@@ -375,7 +381,24 @@ mod tests {
         ) -> Result<(), Error> {
             config.u8_xor_table_config.load(&mut layouter)?;
             config.sbox_table_config.load(&mut layouter)?;
-            config.schedule_keys(layouter, self.key)?;
+            config.range_config.table.load(&mut layouter)?;
+
+            let words =
+                config.schedule_keys(layouter.namespace(|| "AES128 schedule key"), self.key)?;
+            // constraint range_check for every byte in the words
+            let mut i = 0;
+            for word in words {
+                for byte in word {
+                    // range chip
+                    config.range_config.assign(
+                        layouter.namespace(|| format!("range_check for word {}", i)),
+                        &byte,
+                    )?;
+
+                    i += 1;
+                }
+            }
+
             Ok(())
         }
 

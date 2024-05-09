@@ -1,19 +1,15 @@
 use halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     halo2curves::bn256::Fr as Fp,
-    plonk::{Advice, Assigned, Column, ConstraintSystem, Error, Selector, TableColumn},
+    plonk::{Advice, Column, ConstraintSystem, Error, Selector, TableColumn},
     poly::Rotation,
 };
-
-#[derive(Debug, Clone)]
-/// A range-constrained value in the circuit produced by the RangeCheckConfig.
-pub(crate) struct U8RangeConstrained(pub(crate) AssignedCell<Assigned<Fp>, Fp>);
 
 #[derive(Clone, Debug)]
 pub(crate) struct U8RangeCheckConfig {
     q_lookup: Selector,
     value: Column<Advice>,
-    table: U8RangeTableConfig,
+    pub(crate) table: U8RangeTableConfig,
 }
 
 impl U8RangeCheckConfig {
@@ -38,22 +34,15 @@ impl U8RangeCheckConfig {
     pub(crate) fn assign(
         &self,
         mut layouter: impl Layouter<Fp>,
-        value: &Value<Assigned<Fp>>,
-    ) -> Result<U8RangeConstrained, Error> {
+        value: &AssignedCell<Fp, Fp>,
+    ) -> Result<AssignedCell<Fp, Fp>, Error> {
         layouter.assign_region(
             || "Assign u8 range_checked value",
             |mut region| {
                 let offset = 0;
 
                 self.q_lookup.enable(&mut region, offset)?;
-                region
-                    .assign_advice(
-                        || "assign u8 range_check advice value",
-                        self.value,
-                        offset,
-                        || value.clone(),
-                    )
-                    .map(U8RangeConstrained)
+                value.copy_advice(|| "Assign value to range_check", &mut region, self.value, 0)
             },
         )
     }
@@ -100,12 +89,12 @@ mod tests {
         circuit::{Layouter, SimpleFloorPlanner, Value},
         dev::{FailureLocation, MockProver, VerifyFailure},
         halo2curves::bn256::Fr as Fp,
-        plonk::{Assigned, Circuit, ConstraintSystem, Error},
+        plonk::{Circuit, ConstraintSystem, Error},
     };
 
     #[derive(Debug)]
     struct TestCircuit {
-        value: Value<Assigned<Fp>>,
+        value: Value<Fp>,
     }
 
     impl Circuit<Fp> for TestCircuit {
@@ -114,6 +103,7 @@ mod tests {
 
         fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
             let value = meta.advice_column();
+            meta.enable_equality(value);
             U8RangeCheckConfig::configure(meta, value)
         }
 
@@ -123,7 +113,15 @@ mod tests {
             mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
             config.table.load(&mut layouter)?;
-            config.assign(layouter, &self.value)?;
+
+            // assign cell to range check for testing
+            let assigned_cell = layouter.assign_region(
+                || "assign value",
+                |mut region| {
+                    region.assign_advice(|| "Value to be checked", config.value, 0, || self.value)
+                },
+            )?;
+            config.assign(layouter, &assigned_cell)?;
 
             Ok(())
         }
@@ -158,7 +156,7 @@ mod tests {
                 name: "U8 range_check".into(),
                 lookup_index: 0,
                 location: FailureLocation::InRegion {
-                    region: (1, "Assign u8 range_checked value").into(),
+                    region: (2, "Assign u8 range_checked value").into(),
                     offset: 0
                 }
             }])

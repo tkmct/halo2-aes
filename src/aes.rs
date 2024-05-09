@@ -1,8 +1,4 @@
-use halo2_proofs::{
-    circuit::AssignedCell,
-    halo2curves::bn256::Fr as Fp,
-    plonk::{Advice, Column, ConstraintSystem, Error, Fixed, Selector},
-};
+use halo2_proofs::{halo2curves::bn256::Fr as Fp, plonk::ConstraintSystem};
 
 use crate::key_schedule::Aes128KeyScheduleConfig;
 
@@ -19,9 +15,6 @@ impl Aes128Config {
 
 #[cfg(test)]
 mod tests {
-    struct TestCircuit {}
-
-    impl TestCircuit {}
 
     #[test]
     #[ignore]

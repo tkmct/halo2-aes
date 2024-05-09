@@ -18,7 +18,7 @@ use crate::{
     s_box_table::SboxTableConfig,
     u8_range_check::U8RangeCheckConfig,
     u8_xor_table::U8XorTableConfig,
-    utils::{get_round_constant, rotate_word, sub_word, xor_bytes, xor_words},
+    utils::{get_round_constant, sub_word, xor_bytes, xor_words},
 };
 
 #[derive(Clone, Debug)]
@@ -41,7 +41,6 @@ pub struct Aes128KeyScheduleConfig {
     round_constants: Column<Fixed>,
 
     q_round_first: Selector,
-
     q_round_mid: Selector,
 }
 
@@ -64,80 +63,48 @@ impl Aes128KeyScheduleConfig {
         let range_config = U8RangeCheckConfig::configure(meta, words_column);
 
         meta.enable_equality(words_column);
+        meta.enable_equality(rot_column);
         meta.enable_constant(round_constants);
 
-        for i in 0..4 {
-            meta.lookup("Lookup first words of each round", |meta| {
-                // Check XOR of Rconned word and prev_round
-                let q = meta.query_selector(q_round_first);
-                let new_word = meta.query_advice(words_column, Rotation(i));
-                let rconned = meta.query_advice(rcon_column, Rotation(i));
-                let prev_round = meta.query_advice(words_column, Rotation(i - 16));
-
-                vec![
-                    (q.clone() * prev_round, u8_xor_table_config.x),
-                    (q.clone() * rconned, u8_xor_table_config.y),
-                    (q * new_word, u8_xor_table_config.z),
-                ]
-            });
-
-            meta.lookup("Mid words of each round", |meta| {
-                let q = meta.query_selector(q_round_mid);
-                let new_word = meta.query_advice(words_column, Rotation(i));
-                let prev_word = meta.query_advice(words_column, Rotation(i - 4));
-                let prev_round_word = meta.query_advice(words_column, Rotation(i - 16));
-
-                vec![
-                    (q.clone() * prev_word, u8_xor_table_config.x),
-                    (q.clone() * prev_round_word, u8_xor_table_config.y),
-                    (q * new_word, u8_xor_table_config.z),
-                ]
-            });
-
-            // Constraints sub bytes
-            meta.lookup("Sub word", |meta| {
-                let q = meta.query_selector(q_round_first);
-                let rot_byte = meta.query_advice(rot_column, Rotation(i));
-                let subbed_byte = meta.query_advice(sub_bytes_column, Rotation(i));
-
-                vec![
-                    (q.clone() * rot_byte, sbox_table_config.x),
-                    (q.clone() * subbed_byte, sbox_table_config.y),
-                ]
-            });
-        }
-
-        // FIXME: we can constraints this by copy constraints
-        // Which is faster?
-        meta.create_gate("Rotate word", |meta| {
-            // do something
+        meta.lookup("Lookup first words of each round", |meta| {
+            // Check XOR of Rconned word and prev_round
             let q = meta.query_selector(q_round_first);
+            let new_word = meta.query_advice(words_column, Rotation::cur());
+            let rconned = meta.query_advice(rcon_column, Rotation::cur());
+            let prev_round = meta.query_advice(words_column, Rotation(-16));
 
-            // circuilar left shift by one byte
-            // query word_prev
-            let first_byte = meta.query_advice(words_column, Rotation(-4));
-            let second_byte = meta.query_advice(words_column, Rotation(-3));
-            let third_byte = meta.query_advice(words_column, Rotation(-2));
-            let fourth_byte = meta.query_advice(words_column, Rotation(-1));
-
-            let first_rot_byte = meta.query_advice(rot_column, Rotation::cur());
-            let second_rot_byte = meta.query_advice(rot_column, Rotation(1));
-            let third_rot_byte = meta.query_advice(rot_column, Rotation(2));
-            let fourth_rot_byte = meta.query_advice(rot_column, Rotation(3));
-
-            // Check if first_byte == fourt_rot_byte
-            //          second_byte == first_rot_byte
-            //          third_byte == second_rot_byte
-            //          fourth_byte == third_rot_byte
             vec![
-                q.clone() * (first_byte - fourth_rot_byte),
-                q.clone() * (second_byte - first_rot_byte),
-                q.clone() * (third_byte - second_rot_byte),
-                q.clone() * (fourth_byte - third_rot_byte),
+                (q.clone() * prev_round, u8_xor_table_config.x),
+                (q.clone() * rconned, u8_xor_table_config.y),
+                (q * new_word, u8_xor_table_config.z),
             ]
         });
 
-        // TODO: Constraints Rcon
+        meta.lookup("Mid words of each round", |meta| {
+            let q = meta.query_selector(q_round_mid);
+            let new_word = meta.query_advice(words_column, Rotation::cur());
+            let prev_word = meta.query_advice(words_column, Rotation(-4));
+            let prev_round_word = meta.query_advice(words_column, Rotation(-16));
+
+            vec![
+                (q.clone() * prev_word, u8_xor_table_config.x),
+                (q.clone() * prev_round_word, u8_xor_table_config.y),
+                (q * new_word, u8_xor_table_config.z),
+            ]
+        });
+
+        // Constraints sub bytes
+        meta.lookup("Sub word", |meta| {
+            let q = meta.query_selector(q_round_first);
+            let rot_byte = meta.query_advice(rot_column, Rotation::cur());
+            let subbed_byte = meta.query_advice(sub_bytes_column, Rotation::cur());
+
+            vec![
+                (q.clone() * rot_byte, sbox_table_config.x),
+                (q.clone() * subbed_byte, sbox_table_config.y),
+            ]
+        });
+
         // define Rcon as fixed cell
         // use the fixed cell and constraints xor lookup with them.
         meta.lookup("Rcon word", |meta| {
@@ -203,27 +170,38 @@ impl Aes128KeyScheduleConfig {
                     let word_prev = words.get(i - 1).expect("Word should be set");
 
                     if i % 4 == 0 {
-                        // turn on selector
-                        self.q_round_first.enable(&mut region, i * 4)?;
+                        // turn on selector for each byte in the word
+                        for j in 0..3 {
+                            self.q_round_first.enable(&mut region, i * 4 + j)?;
+                        }
 
-                        // get rotated bytes and assign to rot_column
-                        let rotated = rotate_word(
-                            &word_prev
-                                .iter()
-                                .map(|v| v.value().map(|&v| v))
-                                .collect::<Vec<_>>(),
-                        )
-                        .iter()
-                        .enumerate()
-                        .map(|(j, v)| {
-                            region.assign_advice(
-                                || "Assign rotated word",
+                        // rotate word with copy constraint
+                        let rotated = vec![
+                            word_prev[1].copy_advice(
+                                || "Rotate prev word",
+                                &mut region,
                                 self.rot_column,
-                                pos + j,
-                                || *v,
-                            )
-                        })
-                        .collect::<Result<Vec<_>, Error>>()?;
+                                pos,
+                            )?,
+                            word_prev[2].copy_advice(
+                                || "Rotate prev word",
+                                &mut region,
+                                self.rot_column,
+                                pos + 1,
+                            )?,
+                            word_prev[3].copy_advice(
+                                || "Rotate prev word",
+                                &mut region,
+                                self.rot_column,
+                                pos + 2,
+                            )?,
+                            word_prev[0].copy_advice(
+                                || "Rotate prev word",
+                                &mut region,
+                                self.rot_column,
+                                pos + 3,
+                            )?,
+                        ];
 
                         // sub_bytes each byte and assign to sub_bytes_column
                         let subbed = sub_word(
@@ -306,8 +284,11 @@ impl Aes128KeyScheduleConfig {
                         .collect::<Result<Vec<_>, Error>>()?;
                         words.push(word);
                     } else {
-                        // turn on selector for taking xor of word_pre and word right before current one
-                        self.q_round_mid.enable(&mut region, i * 4)?;
+                        // turn on selector for each byte in the word.
+                        // taking xor of word_pre and word right before current one
+                        for j in 0..3 {
+                            self.q_round_mid.enable(&mut region, i * 4 + j)?;
+                        }
                         let word = xor_words(
                             &word_prev
                                 .iter()

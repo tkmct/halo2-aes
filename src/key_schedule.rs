@@ -22,11 +22,11 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub(crate) struct Aes128KeyScheduleConfig {
+pub struct Aes128KeyScheduleConfig {
     // range_config: RangeConfig,
-    sbox_table_config: SboxTableConfig,
-    u8_xor_table_config: U8XorTableConfig,
-    range_config: U8RangeCheckConfig,
+    pub sbox_table_config: SboxTableConfig,
+    pub u8_xor_table_config: U8XorTableConfig,
+    pub range_config: U8RangeCheckConfig,
 
     // Store words as u8 value
     words_column: Column<Advice>,
@@ -40,10 +40,8 @@ pub(crate) struct Aes128KeyScheduleConfig {
     // Round constant to XOR for the
     round_constants: Column<Fixed>,
 
-    q_range_u8: Selector,
-    q_sub_bytes: Selector,
-    q_rot: Selector,
     q_round_first: Selector,
+
     q_round_mid: Selector,
 }
 
@@ -58,9 +56,6 @@ impl Aes128KeyScheduleConfig {
 
         let round_constants = meta.fixed_column();
 
-        let q_range_u8 = meta.complex_selector();
-        let q_sub_bytes = meta.complex_selector();
-        let q_rot = meta.selector();
         let q_round_first = meta.complex_selector();
         let q_round_mid = meta.complex_selector();
 
@@ -98,18 +93,32 @@ impl Aes128KeyScheduleConfig {
                     (q * new_word, u8_xor_table_config.z),
                 ]
             });
+
+            // Constraints sub bytes
+            meta.lookup("Sub word", |meta| {
+                let q = meta.query_selector(q_round_first);
+                let rot_byte = meta.query_advice(rot_column, Rotation(i));
+                let subbed_byte = meta.query_advice(sub_bytes_column, Rotation(i));
+
+                vec![
+                    (q.clone() * rot_byte, sbox_table_config.x),
+                    (q.clone() * subbed_byte, sbox_table_config.y),
+                ]
+            });
         }
 
         // FIXME: we can constraints this by copy constraints
         // Which is faster?
         meta.create_gate("Rotate word", |meta| {
             // do something
-            let q = meta.query_selector(q_rot);
+            let q = meta.query_selector(q_round_first);
+
             // circuilar left shift by one byte
-            let first_byte = meta.query_advice(words_column, Rotation::cur());
-            let second_byte = meta.query_advice(words_column, Rotation(1));
-            let third_byte = meta.query_advice(words_column, Rotation(2));
-            let fourth_byte = meta.query_advice(words_column, Rotation(3));
+            // query word_prev
+            let first_byte = meta.query_advice(words_column, Rotation(-4));
+            let second_byte = meta.query_advice(words_column, Rotation(-3));
+            let third_byte = meta.query_advice(words_column, Rotation(-2));
+            let fourth_byte = meta.query_advice(words_column, Rotation(-1));
 
             let first_rot_byte = meta.query_advice(rot_column, Rotation::cur());
             let second_rot_byte = meta.query_advice(rot_column, Rotation(1));
@@ -125,18 +134,6 @@ impl Aes128KeyScheduleConfig {
                 q.clone() * (second_byte - first_rot_byte),
                 q.clone() * (third_byte - second_rot_byte),
                 q.clone() * (fourth_byte - third_rot_byte),
-            ]
-        });
-
-        // Constraints sub bytes
-        meta.lookup("Sub word", |meta| {
-            let q = meta.query_selector(q_sub_bytes);
-            let rot_byte = meta.query_advice(rot_column, Rotation::cur());
-            let subbed_byte = meta.query_advice(sub_bytes_column, Rotation::cur());
-
-            vec![
-                (q.clone() * rot_byte, sbox_table_config.x),
-                (q.clone() * subbed_byte, sbox_table_config.y),
             ]
         });
 
@@ -162,9 +159,6 @@ impl Aes128KeyScheduleConfig {
             rot_column,
             rcon_column,
             round_constants,
-            q_range_u8,
-            q_sub_bytes,
-            q_rot,
             q_round_first,
             q_round_mid,
             u8_xor_table_config,
@@ -174,7 +168,7 @@ impl Aes128KeyScheduleConfig {
     }
 
     /// Expand given 4 words key to 44 words key where each AssignedCell<Fp,Fp> represent a byte.
-    pub(crate) fn schedule_keys(
+    pub fn schedule_keys(
         &self,
         mut layouter: impl Layouter<Fp>,
         key: [u8; 16],
@@ -211,11 +205,6 @@ impl Aes128KeyScheduleConfig {
                     if i % 4 == 0 {
                         // turn on selector
                         self.q_round_first.enable(&mut region, i * 4)?;
-
-                        // Enable sub bytes selector for each byte in word
-                        for l in 0..4 {
-                            self.q_sub_bytes.enable(&mut region, i * 4 + l)?;
-                        }
 
                         // get rotated bytes and assign to rot_column
                         let rotated = rotate_word(
@@ -332,7 +321,7 @@ impl Aes128KeyScheduleConfig {
                         .iter()
                         .enumerate()
                         .map(|(j, v)| {
-                            println!("Assign word, {i} {j} at pos {} = {:?}", pos + j, v);
+                            // println!("Assign word, {i} {j} at pos {} = {:?}", pos + j, v);
                             region.assign_advice(
                                 || "Assign new word",
                                 self.words_column,
@@ -357,7 +346,7 @@ mod tests {
 
     use halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
-        dev::{cost, CellValue, MockProver},
+        dev::{CellValue, MockProver},
         halo2curves::bn256::Fr as Fp,
         plonk::{Circuit, ConstraintSystem, Error},
     };
@@ -459,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_constraints() {
-        let k = 18;
+        let k = 17;
         let circuit = TestCircuit { key: [0u8; 16] };
 
         let mock = MockProver::run(k, &circuit, vec![]).unwrap();
@@ -471,7 +460,7 @@ mod tests {
     fn print_key_schedule() {
         use plotters::prelude::*;
 
-        let k = 18;
+        let k = 17;
         let circuit = TestCircuit { key: [0u8; 16] };
 
         let root =
@@ -491,7 +480,7 @@ mod tests {
     fn cost_estimate_key_schedule() {
         use halo2_proofs::dev::cost_model::{from_circuit_to_model_circuit, CommitmentScheme};
 
-        let k = 18;
+        let k = 17;
         let circuit = TestCircuit { key: [0u8; 16] };
 
         let model = from_circuit_to_model_circuit::<_, _, 56, 56>(

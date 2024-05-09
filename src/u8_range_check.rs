@@ -6,10 +6,10 @@ use halo2_proofs::{
 };
 
 #[derive(Clone, Debug)]
-pub(crate) struct U8RangeCheckConfig {
+pub struct U8RangeCheckConfig {
     q_lookup: Selector,
     value: Column<Advice>,
-    pub(crate) table: U8RangeTableConfig,
+    pub table: U8RangeTableConfig,
 }
 
 impl U8RangeCheckConfig {
@@ -31,7 +31,7 @@ impl U8RangeCheckConfig {
         }
     }
 
-    pub(crate) fn assign(
+    pub fn assign(
         &self,
         mut layouter: impl Layouter<Fp>,
         value: &AssignedCell<Fp, Fp>,
@@ -49,7 +49,7 @@ impl U8RangeCheckConfig {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct U8RangeTableConfig {
+pub struct U8RangeTableConfig {
     pub(crate) value: TableColumn,
 }
 
@@ -60,7 +60,7 @@ impl U8RangeTableConfig {
         }
     }
 
-    pub(crate) fn load(&self, layouter: &mut impl Layouter<Fp>) -> Result<(), Error> {
+    pub fn load(&self, layouter: &mut impl Layouter<Fp>) -> Result<(), Error> {
         // create u8 table
         layouter.assign_table(
             || "load range table for u8",

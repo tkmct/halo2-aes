@@ -5,7 +5,7 @@ use halo2_proofs::{
 };
 
 #[derive(Clone, Debug)]
-pub(crate) struct U8XorTableConfig {
+pub struct U8XorTableConfig {
     pub(crate) x: TableColumn,
     pub(crate) y: TableColumn,
     pub(crate) z: TableColumn,
@@ -20,7 +20,7 @@ impl U8XorTableConfig {
         }
     }
 
-    pub(crate) fn load(&self, layouter: &mut impl Layouter<Fp>) -> Result<(), Error> {
+    pub fn load(&self, layouter: &mut impl Layouter<Fp>) -> Result<(), Error> {
         // create u8 ^ u8 = u8 table
         layouter.assign_table(
             || "load xor table for u8",

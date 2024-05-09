@@ -21,7 +21,7 @@ pub const S_BOX: [u8; 256] = [
 ];
 
 #[derive(Clone, Debug)]
-pub(crate) struct SboxTableConfig {
+pub struct SboxTableConfig {
     pub(crate) x: TableColumn,
     pub(crate) y: TableColumn,
 }
@@ -34,7 +34,7 @@ impl SboxTableConfig {
         }
     }
 
-    pub(crate) fn load(&self, layouter: &mut impl Layouter<Fp>) -> Result<(), Error> {
+    pub fn load(&self, layouter: &mut impl Layouter<Fp>) -> Result<(), Error> {
         layouter.assign_table(
             || "load sbox table",
             |mut table| {

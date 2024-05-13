@@ -82,7 +82,6 @@ fn prove_aes128_key_schedule_circuit(_c: &mut Criterion) {
     let mut criterion = Criterion::default().sample_size(SAMPLE_SIZE);
     let circuit = Aes128KeyScheduleBenchCircuit { key: [0u8; 16] };
     let (params, pk, _) = setup_params(17, circuit.clone());
-
     let bench_name = format!("prove key scheduling for AES128");
 
     criterion.bench_function(&bench_name, |b| {
@@ -91,15 +90,20 @@ fn prove_aes128_key_schedule_circuit(_c: &mut Criterion) {
             let mut transcript =
                 Blake2bWrite::<Vec<u8>, G1Affine, Challenge255<G1Affine>>::init(vec![]);
 
-            create_proof::<
+            let result = create_proof::<
                 KZGCommitmentScheme<Bn256>,
                 ProverSHPLONK<'_, Bn256>,
                 Challenge255<G1Affine>,
                 _,
                 _,
                 _,
-            >(&params, &pk, &[circuit], &[&[]], OsRng, &mut transcript)
-            .expect("prover should not fail");
+            >(&params, &pk, &[circuit], &[&[]], OsRng, &mut transcript);
+            println!("Error: {:?}", result);
+            if result.is_err() {
+                panic!("Create proof fail");
+            }
+
+            // .expect("prover should not fail");
             end_timer!(tm);
         })
     });

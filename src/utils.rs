@@ -1,6 +1,6 @@
 use halo2_proofs::{circuit::Value, halo2curves::bn256::Fr as Fp, plonk::Error};
 
-use crate::s_box::S_BOX;
+use crate::s_box_table::S_BOX;
 
 /// Calculate xor of given two bytes.
 /// Returns the new value
@@ -22,17 +22,6 @@ pub(crate) fn xor_words(x: &Vec<Value<Fp>>, y: &Vec<Value<Fp>>) -> Result<Vec<Va
         .zip(y)
         .map(|(x, y)| xor_bytes(x, y))
         .collect::<Result<Vec<_>, Error>>()
-}
-
-/// Circular left shift by one byte.
-pub(crate) fn rotate_word(x: &Vec<Value<Fp>>) -> Vec<Value<Fp>> {
-    assert!(x.len() == 4);
-    let mut word = vec![];
-    word.push(x[1]);
-    word.push(x[2]);
-    word.push(x[3]);
-    word.push(x[0]);
-    word
 }
 
 /// Substitute each byte in a word using s-box

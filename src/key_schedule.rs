@@ -82,7 +82,6 @@ impl Aes128KeyScheduleConfig {
             ]
         });
 
-        // TODO: constraint equality of fixed column and advice column
         meta.create_gate("Equality RC", |meta| {
             let q = meta.query_selector(q_eq_rcon);
             let x = meta.query_advice(words_column, Rotation::cur());

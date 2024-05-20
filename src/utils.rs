@@ -1,6 +1,6 @@
 use halo2_proofs::{circuit::Value, halo2curves::bn256::Fr as Fp, plonk::Error};
 
-use crate::s_box_table::S_BOX;
+use crate::table::s_box::S_BOX;
 
 /// Calculate xor of given two bytes.
 /// Returns the new value

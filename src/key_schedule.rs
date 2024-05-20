@@ -15,9 +15,7 @@ use halo2_proofs::{
 };
 
 use crate::{
-    s_box_table::SboxTableConfig,
-    u8_range_check::U8RangeCheckConfig,
-    u8_xor_table::U8XorTableConfig,
+    table::{s_box::SboxTableConfig, u8_range_check::U8RangeCheckConfig, u8_xor::U8XorTableConfig},
     utils::{get_round_constant, sub_word, xor_bytes, xor_words},
 };
 

@@ -99,22 +99,34 @@ impl Aes128KeyScheduleConfig {
         }
     }
 
+    pub fn load(&self, layouter: &mut impl Layouter<Fp>) {
+        self.u8_xor_table_config
+            .load(layouter)
+            .expect("Load table should not fail");
+        self.sbox_table_config
+            .load(layouter)
+            .expect("Load table should not fail");
+        self.range_config
+            .table
+            .load(layouter)
+            .expect("Load table should not fail");
+    }
+
     /// Expand given 4 words key to 44 words key where each AssignedCell<Fp,Fp> represent a byte.
     pub fn schedule_keys(
         &self,
-        mut layouter: impl Layouter<Fp>,
+        layouter: &mut impl Layouter<Fp>,
         key: [u8; 16],
     ) -> Result<Vec<Vec<AssignedCell<Fp, Fp>>>, Error> {
         let mut words = vec![];
 
         // each round contain 16 byte = 4 words.
-        let mut round = self.assign_first_round(&mut layouter, key)?;
+        let mut round = self.assign_first_round(layouter, key)?;
         words.push(round.clone());
 
         for i in 1..=10 {
             // assign each round
-            // round = self.assign_round(&mut layouter, i, round)?;
-            round = self.assign_round(&mut layouter, i, round)?;
+            round = self.assign_round(layouter, i, round)?;
             words.push(round.clone())
         }
 
@@ -208,14 +220,6 @@ impl Aes128KeyScheduleConfig {
                     pos,
                     || rc,
                 )?;
-                // rc_fixed
-                //     .copy_advice(
-                //         || "Copy fixed value to words_column",
-                //         &mut region,
-                //         self.words_column,
-                //         pos,
-                //     )
-                //     ?;
 
                 region.assign_advice(
                     || "Copy fixed value to words_column",
@@ -387,12 +391,10 @@ mod tests {
             config: Self::Config,
             mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
-            config.u8_xor_table_config.load(&mut layouter)?;
-            config.sbox_table_config.load(&mut layouter)?;
-            config.range_config.table.load(&mut layouter)?;
+            config.load(&mut layouter);
 
-            let words =
-                config.schedule_keys(layouter.namespace(|| "AES128 schedule key"), self.key)?;
+            let words = config
+                .schedule_keys(&mut layouter.namespace(|| "AES128 schedule key"), self.key)?;
             // constraint range_check for every byte in the words
             let mut i = 0;
             for word in words {

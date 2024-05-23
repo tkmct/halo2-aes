@@ -41,7 +41,8 @@ impl Circuit<Fp> for Aes128KeyScheduleBenchCircuit {
         config.sbox_table_config.load(&mut layouter)?;
         config.range_config.table.load(&mut layouter)?;
 
-        let words = config.schedule_keys(layouter.namespace(|| "AES128 schedule key"), self.key)?;
+        let words =
+            config.schedule_keys(&mut layouter.namespace(|| "AES128 schedule key"), self.key)?;
         // constraint range_check for every byte in the words
         let mut i = 0;
         for word in words {

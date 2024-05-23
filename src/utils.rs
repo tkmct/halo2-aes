@@ -24,13 +24,15 @@ pub(crate) fn xor_words(x: &Vec<Value<Fp>>, y: &Vec<Value<Fp>>) -> Result<Vec<Va
         .collect::<Result<Vec<_>, Error>>()
 }
 
+/// Substitute single byte using s-box
+pub(crate) fn sub_byte(x: &Value<Fp>) -> Value<Fp> {
+    x.map(|v| Fp::from(S_BOX[*v.to_bytes().first().unwrap() as usize] as u64))
+}
+
 /// Substitute each byte in a word using s-box
 pub(crate) fn sub_word(x: &Vec<Value<Fp>>) -> Vec<Value<Fp>> {
     assert!(x.len() == 4);
-    let word = x
-        .iter()
-        .map(|b| b.map(|v| Fp::from(S_BOX[*v.to_bytes().first().unwrap() as usize] as u64)))
-        .collect::<Vec<_>>();
+    let word = x.iter().map(sub_byte).collect::<Vec<_>>();
     word
 }
 

@@ -6,7 +6,9 @@ use halo2_proofs::{
 };
 
 use crate::{
-    key_schedule::Aes128KeyScheduleConfig, table::u8_xor::U8XorTableConfig, utils::xor_bytes,
+    key_schedule::Aes128KeyScheduleConfig,
+    table::{s_box::SboxTableConfig, u8_xor::U8XorTableConfig},
+    utils::{sub_word, xor_bytes},
 };
 
 #[derive(Clone, Debug)]
@@ -14,17 +16,21 @@ pub struct FixedAes128Config {
     key: Option<[u8; 16]>,
     key_schedule_config: Aes128KeyScheduleConfig,
     u8_xor_table_config: U8XorTableConfig,
+    sbox_table_config: SboxTableConfig,
 
     words_column: Column<Advice>,
     q_xor_bytes: Selector,
+    q_sub_bytes: Selector,
 }
 
 impl FixedAes128Config {
     pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
         let key_schedule_config = Aes128KeyScheduleConfig::configure(meta);
         let u8_xor_table_config = U8XorTableConfig::configure(meta);
+        let sbox_table_config = SboxTableConfig::configure(meta);
         let words_column = meta.advice_column();
         let q_xor_bytes = meta.complex_selector();
+        let q_sub_bytes = meta.complex_selector();
 
         meta.enable_equality(words_column);
 
@@ -43,12 +49,26 @@ impl FixedAes128Config {
             ]
         });
 
+        // Constraints sub bytes
+        meta.lookup("Sub Bytes", |meta| {
+            let q = meta.query_selector(q_sub_bytes);
+            let rot_byte = meta.query_advice(words_column, Rotation::cur());
+            let subbed_byte = meta.query_advice(words_column, Rotation(4));
+
+            vec![
+                (q.clone() * rot_byte, sbox_table_config.x),
+                (q.clone() * subbed_byte, sbox_table_config.y),
+            ]
+        });
+
         Self {
             key: None,
             key_schedule_config,
             u8_xor_table_config,
+            sbox_table_config,
             words_column,
             q_xor_bytes,
+            q_sub_bytes,
         }
     }
 
@@ -65,7 +85,7 @@ impl FixedAes128Config {
         // 1. Initial round: Add RoundKey_0
         for i in 0..4 {
             let offset = i * 12;
-            let tmp = layouter.assign_region(
+            let mut tmp = layouter.assign_region(
                 || "Assign Initial AddRoundKey",
                 |mut region| {
                     let mut out = vec![];
@@ -99,11 +119,60 @@ impl FixedAes128Config {
                     Ok(out)
                 },
             )?;
-            round_out.push(tmp);
+            round_out.append(&mut tmp);
         }
-        // we have 4 words in round_out vec.
 
-        // this is just a xor of first round key
+        // we have 4 words in round_out vec.
+        // 9 rounds
+        for i in 0..9 {
+            round_out = layouter.assign_region(
+                || "Assign rounds",
+                |mut region| {
+                    // SubBytes
+                    let subbed = round_out
+                        .chunks(4)
+                        .enumerate()
+                        .map(|(no_word, word)| {
+                            word.iter().enumerate().for_each(|(no_byte, byte)| {
+                                // turn on sbox selector
+                                self.q_sub_bytes.enable(&mut region, no_word * 8 + no_byte);
+                                byte.copy_advice(
+                                    || "Copy prev word",
+                                    &mut region,
+                                    self.words_column,
+                                    no_word * 8 + no_byte,
+                                )
+                                .expect("copy advice should not fail");
+                            });
+                            sub_word(
+                                &word
+                                    .iter()
+                                    .map(|a| a.value().map(|&v| v))
+                                    .collect::<Vec<_>>(),
+                            )
+                            .iter()
+                            .enumerate()
+                            .map(|(j, v)| {
+                                region.assign_advice(
+                                    || "Assign sub_bytes word",
+                                    self.words_column,
+                                    no_word * 8 + 4 + j,
+                                    || *v,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, Error>>()
+                        })
+                        .collect::<Result<Vec<Vec<_>>, Error>>()?;
+
+                    // ShiftRows
+                    //Mixcolumns
+                    // AddRoundKey
+
+                    Ok(vec![])
+                },
+            )?;
+        }
+
         Ok(())
     }
 
@@ -163,6 +232,7 @@ mod tests {
             mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
             config.u8_xor_table_config.load(&mut layouter)?;
+            config.sbox_table_config.load(&mut layouter)?;
             config.key_schedule_config.load(&mut layouter);
 
             config.set_key(self.key);

@@ -1,5 +1,5 @@
 use halo2_proofs::{
-    circuit::{AssignedCell, Layouter, Value},
+    circuit::{AssignedCell, Layouter, Region, Value},
     halo2curves::bn256::Fr as Fp,
     plonk::{Advice, Column, ConstraintSystem, Error, Selector},
     poly::Rotation,
@@ -7,7 +7,11 @@ use halo2_proofs::{
 
 use crate::{
     key_schedule::Aes128KeyScheduleConfig,
-    table::{s_box::SboxTableConfig, u8_xor::U8XorTableConfig},
+    table::{
+        gf_mul::{PolyMulBy2TableConfig, PolyMulBy3TableConfig, MUL_BY_2, MUL_BY_3},
+        s_box::SboxTableConfig,
+        u8_xor::U8XorTableConfig,
+    },
     utils::{sub_word, xor_bytes},
 };
 
@@ -17,10 +21,15 @@ pub struct FixedAes128Config {
     key_schedule_config: Aes128KeyScheduleConfig,
     u8_xor_table_config: U8XorTableConfig,
     sbox_table_config: SboxTableConfig,
+    mul2_table_config: PolyMulBy2TableConfig,
+    mul3_table_config: PolyMulBy3TableConfig,
 
     words_column: Column<Advice>,
     q_xor_bytes: Selector,
+    q_xor_adj: Selector,
     q_sub_bytes: Selector,
+    q_mul_by_2: Selector,
+    q_mul_by_3: Selector,
 }
 
 impl FixedAes128Config {
@@ -28,19 +37,38 @@ impl FixedAes128Config {
         let key_schedule_config = Aes128KeyScheduleConfig::configure(meta);
         let u8_xor_table_config = U8XorTableConfig::configure(meta);
         let sbox_table_config = SboxTableConfig::configure(meta);
+        let mul2_table_config = PolyMulBy2TableConfig::configure(meta);
+        let mul3_table_config = PolyMulBy3TableConfig::configure(meta);
+
         let words_column = meta.advice_column();
         let q_xor_bytes = meta.complex_selector();
+        let q_xor_adj = meta.complex_selector();
         let q_sub_bytes = meta.complex_selector();
+        let q_mul_by_2 = meta.complex_selector();
+        let q_mul_by_3 = meta.complex_selector();
 
         meta.enable_equality(words_column);
 
-        // TODO: setup constraints
         meta.lookup("XOR Bytes", |meta| {
             let q = meta.query_selector(q_xor_bytes);
 
             let x = meta.query_advice(words_column, Rotation::cur());
             let y = meta.query_advice(words_column, Rotation(4));
             let z = meta.query_advice(words_column, Rotation(8));
+
+            vec![
+                (q.clone() * x, u8_xor_table_config.x),
+                (q.clone() * y, u8_xor_table_config.y),
+                (q.clone() * z, u8_xor_table_config.z),
+            ]
+        });
+
+        meta.lookup("XOR Adjacent Bytes", |meta| {
+            let q = meta.query_selector(q_xor_adj);
+
+            let x = meta.query_advice(words_column, Rotation::cur());
+            let y = meta.query_advice(words_column, Rotation(1));
+            let z = meta.query_advice(words_column, Rotation(2));
 
             vec![
                 (q.clone() * x, u8_xor_table_config.x),
@@ -61,22 +89,51 @@ impl FixedAes128Config {
             ]
         });
 
+        // Constraints MUL by 2
+        meta.lookup("Mul by 2", |meta| {
+            let q = meta.query_selector(q_mul_by_2);
+            let prev = meta.query_advice(words_column, Rotation::cur());
+            let new = meta.query_advice(words_column, Rotation::next());
+
+            vec![
+                (q.clone() * prev, mul2_table_config.x),
+                (q.clone() * new, mul2_table_config.y),
+            ]
+        });
+
+        // Constraints MUL by 3
+        meta.lookup("Mul by 3", |meta| {
+            let q = meta.query_selector(q_mul_by_3);
+            let prev = meta.query_advice(words_column, Rotation::cur());
+            let new = meta.query_advice(words_column, Rotation::next());
+
+            vec![
+                (q.clone() * prev, mul3_table_config.x),
+                (q.clone() * new, mul3_table_config.y),
+            ]
+        });
+
         Self {
             key: None,
             key_schedule_config,
             u8_xor_table_config,
             sbox_table_config,
+            mul2_table_config,
+            mul3_table_config,
             words_column,
             q_xor_bytes,
+            q_xor_adj,
             q_sub_bytes,
+            q_mul_by_2,
+            q_mul_by_3,
         }
     }
 
     pub fn encrypt(
-        &self,
+        &mut self,
         mut layouter: impl Layouter<Fp>,
         plaintext: [u8; 16],
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<AssignedCell<Fp, Fp>>, Error> {
         let round_keys = self
             .key_schedule_config
             .schedule_keys(&mut layouter, self.key.expect("Key should be set"))?;
@@ -107,7 +164,7 @@ impl FixedAes128Config {
                             self.words_column,
                             offset + 4 + j,
                         )?;
-                        let xor = xor_bytes(&p, &k)?;
+                        let xor = xor_bytes(&p, &k);
                         out.push(region.assign_advice(
                             || "Assign xor value",
                             self.words_column,
@@ -121,21 +178,28 @@ impl FixedAes128Config {
             )?;
             round_out.append(&mut tmp);
         }
+        println!("Round0");
+        round_out.iter().for_each(|cell| {
+            println!(" {:?}", cell.value());
+        });
 
         // we have 4 words in round_out vec.
-        // 9 rounds
-        for i in 0..9 {
+        for no_round in 1..11 {
             round_out = layouter.assign_region(
                 || "Assign rounds",
                 |mut region| {
-                    // SubBytes
-                    let subbed = round_out
+                    // SubBytes subbed is 4*4 vector
+                    let subbed = round_out // 16 bytes
                         .chunks(4)
                         .enumerate()
                         .map(|(no_word, word)| {
+                            // iterate by 4 bytes * 4 times
                             word.iter().enumerate().for_each(|(no_byte, byte)| {
+                                // iterate 1 byte * 4 times
                                 // turn on sbox selector
-                                self.q_sub_bytes.enable(&mut region, no_word * 8 + no_byte);
+                                self.q_sub_bytes
+                                    .enable(&mut region, no_word * 8 + no_byte)
+                                    .expect("Enabling selectors should not fail");
                                 byte.copy_advice(
                                     || "Copy prev word",
                                     &mut region,
@@ -163,17 +227,129 @@ impl FixedAes128Config {
                             .collect::<Result<Vec<_>, Error>>()
                         })
                         .collect::<Result<Vec<Vec<_>>, Error>>()?;
+                    println!("S_BOX ");
+                    subbed
+                        .iter()
+                        .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
+
+                    let mut offset = 32;
 
                     // ShiftRows
-                    //Mixcolumns
-                    // AddRoundKey
+                    // Shift rows for subbed bytes.
+                    let mut shifted = vec![];
 
-                    Ok(vec![])
+                    // Shift rows is just copy constraints.
+                    // 1st word (0,0) (1,1) (2,2) (3,3)
+                    // 2nd word (0,1) (1,2) (2,3) (3,0)
+                    // 3rd word (0,2) (1,3) (2,0) (3,1)
+                    // 4th word (0,3) (1,0) (2,1) (3,2)
+                    for i in 0..4 {
+                        let mut v = vec![];
+                        for j in 0..4 {
+                            v.push(subbed[(i + j) % 4][j].copy_advice(
+                                || "Copy subbed word",
+                                &mut region,
+                                self.words_column,
+                                offset + j,
+                            )?);
+                        }
+                        shifted.push(v);
+                        offset += 4;
+                    }
+                    println!("After shift");
+                    shifted
+                        .iter()
+                        .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
+
+                    // Mixcolumns
+                    // do linear transformation to the columns.
+                    // for each column(word) multiply by matrix
+                    //   2 3 1 1
+                    //   1 2 3 1
+                    //   1 1 2 3
+                    //   3 1 1 2
+                    //
+                    let matrix = vec![
+                        vec![2, 3, 1, 1],
+                        vec![1, 2, 3, 1],
+                        vec![1, 1, 2, 3],
+                        vec![3, 1, 1, 2],
+                    ];
+
+                    // Now e have 4*4 = 16 bytes in the mixed
+                    let mixed = if no_round == 10 {
+                        shifted
+                    } else {
+                        shifted
+                            .iter()
+                            .map(|word| {
+                                matrix
+                                    .iter()
+                                    .map(|col| {
+                                        let (res, off) =
+                                            self.lcon(&mut region, word, col, offset)?;
+                                        offset += off;
+                                        Ok(res)
+                                    })
+                                    .collect::<Result<Vec<_>, Error>>()
+                            })
+                            .collect::<Result<Vec<Vec<_>>, Error>>()?
+                    };
+                    println!("After mixed");
+                    mixed
+                        .iter()
+                        .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
+
+                    // AddRoundKey
+                    // Assign mixed and key, then take xor
+                    Ok(mixed
+                        .iter()
+                        .enumerate()
+                        .map(|(i, word)| {
+                            let mut out = vec![];
+
+                            for j in 0..4 {
+                                let p = word[j].value().map(|v| *v);
+                                let k = round_keys[no_round][i * 4 + j].value_field().evaluate();
+
+                                self.q_xor_bytes.enable(&mut region, offset + j)?;
+                                region.assign_advice(
+                                    || "Assign plaintext",
+                                    self.words_column,
+                                    offset + j,
+                                    || p,
+                                )?;
+                                round_keys[no_round][i * 4 + j].copy_advice(
+                                    || "Copy round key from scheduled keys",
+                                    &mut region,
+                                    self.words_column,
+                                    offset + 4 + j,
+                                )?;
+                                let xor = xor_bytes(&p, &k);
+                                out.push(region.assign_advice(
+                                    || "Assign xor value",
+                                    self.words_column,
+                                    offset + 8 + j,
+                                    || xor,
+                                )?);
+                            }
+                            offset += 12;
+                            Ok(out)
+                        })
+                        .collect::<Result<Vec<Vec<_>>, Error>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>())
                 },
             )?;
+
+            println!("Round {}", no_round);
+            round_out.iter().for_each(|cell| {
+                println!(" {:?}", cell.value());
+            });
         }
 
-        Ok(())
+        Ok(round_out)
     }
 
     pub fn decrypt(&self, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
@@ -184,20 +360,154 @@ impl FixedAes128Config {
         self.key = Some(key);
     }
 
-    fn sub_bytes() {
-        todo!()
-    }
+    // Compute linear combination of word and given coefficients
+    fn lcon(
+        &mut self,
+        region: &mut Region<Fp>,
+        word: &Vec<AssignedCell<Fp, Fp>>,
+        coeffs: &Vec<u32>,
+        offset: usize,
+    ) -> Result<(AssignedCell<Fp, Fp>, usize), Error> {
+        let mut internal_offset = 0;
 
-    fn shift_rows() {
-        todo!()
-    }
+        let tmp = word
+            .iter()
+            .zip(coeffs)
+            .map(|(byte, col)| match col {
+                1 => {
+                    // just copy advice from word
+                    let res = byte.copy_advice(
+                        || "Copy mul by 1",
+                        region,
+                        self.words_column,
+                        offset + internal_offset,
+                    );
+                    internal_offset += 1;
+                    res
+                }
+                2 => {
+                    // TODO: extract method to map values using table
+                    let new_byte = byte.value().map(|v| {
+                        Fp::from(MUL_BY_2[*v.to_bytes().first().unwrap() as usize] as u64)
+                    });
+                    self.q_mul_by_2.enable(region, offset + internal_offset)?;
+                    byte.copy_advice(
+                        || "Copy prev_byte",
+                        region,
+                        self.words_column,
+                        offset + internal_offset,
+                    )?;
+                    internal_offset += 1;
 
-    fn mix_columns() {
-        todo!()
-    }
+                    let res = region.assign_advice(
+                        || "Assign mul by 2",
+                        self.words_column,
+                        offset + internal_offset,
+                        || new_byte,
+                    );
+                    internal_offset += 1;
+                    res
+                }
+                3 => {
+                    // TODO: extract method to map values using table
 
-    fn add_round_key(&mut self, key: Vec<AssignedCell<Fp, Fp>>, val: Vec<u8>) {
-        todo!()
+                    let new_byte = byte.value().map(|v| {
+                        Fp::from(MUL_BY_3[*v.to_bytes().first().unwrap() as usize] as u64)
+                    });
+                    self.q_mul_by_3.enable(region, offset + internal_offset)?;
+                    byte.copy_advice(
+                        || "Copy prev_byte",
+                        region,
+                        self.words_column,
+                        offset + internal_offset,
+                    )?;
+                    internal_offset += 1;
+
+                    let res = region.assign_advice(
+                        || "Assign mul by 3",
+                        self.words_column,
+                        offset + internal_offset,
+                        || new_byte,
+                    );
+                    internal_offset += 1;
+                    res
+                }
+                _ => panic!("col should be 1, 2, or 3."),
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        // we have 4 bytes in tmp now
+        // xor first two
+        self.q_xor_adj.enable(region, offset + internal_offset)?;
+        tmp[0].copy_advice(
+            || "Copy mul[0]",
+            region,
+            self.words_column,
+            offset + internal_offset,
+        )?;
+        internal_offset += 1;
+        tmp[1].copy_advice(
+            || "Copy mul[1]",
+            region,
+            self.words_column,
+            offset + internal_offset,
+        )?;
+        internal_offset += 1;
+
+        let intermediate_0 = region.assign_advice(
+            || "Assign MixColumns intermediate value",
+            self.words_column,
+            offset + internal_offset,
+            || xor_bytes(&tmp[0].value().map(|v| *v), &tmp[1].value().map(|v| *v)),
+        )?;
+        internal_offset += 1;
+
+        self.q_xor_adj.enable(region, offset + internal_offset)?;
+        tmp[2].copy_advice(
+            || "Copy mul[2]",
+            region,
+            self.words_column,
+            offset + internal_offset,
+        )?;
+        internal_offset += 1;
+        tmp[3].copy_advice(
+            || "Copy mul[3]",
+            region,
+            self.words_column,
+            offset + internal_offset,
+        )?;
+        internal_offset += 1;
+
+        // enable xor_adj for the last.
+        self.q_xor_adj.enable(region, offset + internal_offset)?;
+        let intermediate_1 = region.assign_advice(
+            || "Assign MixColumns intermediate value",
+            self.words_column,
+            offset + internal_offset,
+            || xor_bytes(&tmp[2].value().map(|v| *v), &tmp[3].value().map(|v| *v)),
+        )?;
+        internal_offset += 1;
+
+        intermediate_0.copy_advice(
+            || "Copy intermediate_0",
+            region,
+            self.words_column,
+            offset + internal_offset,
+        )?;
+        internal_offset += 1;
+
+        let res = region.assign_advice(
+            || "Assign MixColumns new value",
+            self.words_column,
+            offset + internal_offset,
+            || {
+                xor_bytes(
+                    &intermediate_0.value().map(|v| *v),
+                    &intermediate_1.value().map(|v| *v),
+                )
+            },
+        )?;
+        Ok((res, internal_offset + 1))
     }
 }
 
@@ -235,8 +545,16 @@ mod tests {
             config.sbox_table_config.load(&mut layouter)?;
             config.key_schedule_config.load(&mut layouter);
 
+            config.mul2_table_config.load(&mut layouter)?;
+            config.mul3_table_config.load(&mut layouter)?;
+
             config.set_key(self.key);
-            config.encrypt(layouter, self.plaintext)?;
+
+            let val = config.encrypt(layouter, self.plaintext)?;
+
+            val.iter().for_each(|cell| {
+                println!(" {:?}", cell.value());
+            });
 
             Ok(())
         }
@@ -257,19 +575,19 @@ mod tests {
         let mock = MockProver::run(k, &circuit, vec![]).unwrap();
         mock.assert_satisfied();
 
-        // what is the input to aes function?
-        // plaintext (128 bit)
-        // key (128 bit)
+        {
+            use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+            use aes::Aes128;
 
-        // Expand key
+            let key = GenericArray::from([0u8; 16]);
+            let mut block = GenericArray::from([0u8; 16]);
 
-        // Add key
-
-        // Iterate the following operations for 10 rounds
-        // but in the last round, we don't execute MixColumn.
-        // 1. SubBytes
-        // 2. ShiftRows
-        // 3. MixColumns
-        // 4. AddRoundKey
+            // Initialize cipher
+            let cipher = Aes128::new(&key);
+            cipher.encrypt_block(&mut block);
+            block.iter().for_each(|v| {
+                println!("{:02X?}", v);
+            });
+        }
     }
 }

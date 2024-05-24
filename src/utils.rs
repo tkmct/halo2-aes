@@ -4,9 +4,9 @@ use crate::table::s_box::S_BOX;
 
 /// Calculate xor of given two bytes.
 /// Returns the new value
-pub(crate) fn xor_bytes(x: &Value<Fp>, y: &Value<Fp>) -> Result<Value<Fp>, Error> {
+pub(crate) fn xor_bytes(x: &Value<Fp>, y: &Value<Fp>) -> Value<Fp> {
     // x and y should be u8.
-    Ok(x.zip(*y)
+    x.zip(*y)
         .map(|(x, y)| {
             x.to_bytes()
                 .iter()
@@ -14,14 +14,14 @@ pub(crate) fn xor_bytes(x: &Value<Fp>, y: &Value<Fp>) -> Result<Value<Fp>, Error
                 .map(|(x_b, y_b)| x_b ^ y_b)
                 .collect::<Vec<_>>()
         })
-        .map(|bytes| Fp::from_bytes(&bytes.try_into().unwrap()).unwrap()))
+        .map(|bytes| Fp::from_bytes(&bytes.try_into().unwrap()).unwrap())
 }
 /// Calculate XOR of given two words.
-pub(crate) fn xor_words(x: &Vec<Value<Fp>>, y: &Vec<Value<Fp>>) -> Result<Vec<Value<Fp>>, Error> {
+pub(crate) fn xor_words(x: &Vec<Value<Fp>>, y: &Vec<Value<Fp>>) -> Vec<Value<Fp>> {
     x.iter()
         .zip(y)
         .map(|(x, y)| xor_bytes(x, y))
-        .collect::<Result<Vec<_>, Error>>()
+        .collect::<Vec<_>>()
 }
 
 /// Substitute single byte using s-box
@@ -54,7 +54,7 @@ mod tests {
     fn test_xor_bytes() {
         let x = Value::known(Fp::from(5));
         let y = Value::known(Fp::from(12));
-        let z = xor_bytes(&x, &y).unwrap();
+        let z = xor_bytes(&x, &y);
 
         z.assert_if_known(|v| v.eq(&Fp::from(9)));
     }

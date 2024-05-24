@@ -47,7 +47,7 @@ impl SboxTableConfig {
                     )?;
 
                     table.assign_cell(
-                        || "assign cell for sbox input",
+                        || "assign cell for sbox output",
                         self.y,
                         i,
                         || Value::known(Fp::from(S_BOX[i] as u64)),
@@ -63,7 +63,7 @@ impl SboxTableConfig {
                 )?;
 
                 table.assign_cell(
-                    || "assign cell for sbox input",
+                    || "assign cell for sbox output",
                     self.y,
                     256,
                     || Value::known(Fp::from(0)),

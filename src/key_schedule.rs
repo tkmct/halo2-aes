@@ -251,7 +251,7 @@ impl Aes128KeyScheduleConfig {
                         .expect("First value should not be empty")
                         .value()
                         .map(|v| *v),
-                )?;
+                );
                 region.assign_advice(
                     || "Assign xor Rc and Sub",
                     self.words_column,
@@ -297,7 +297,7 @@ impl Aes128KeyScheduleConfig {
                         .iter()
                         .map(|v| v.value().map(|&v| v))
                         .collect::<Vec<_>>(),
-                )?
+                )
                 .iter()
                 .map(|v| {
                     let cell =
@@ -336,7 +336,7 @@ impl Aes128KeyScheduleConfig {
                             .iter()
                             .map(|v| v.value().map(|&v| v))
                             .collect::<Vec<_>>(),
-                    )?
+                    )
                     .iter()
                     .map(|v| {
                         // Enable xor bytes except for the last word

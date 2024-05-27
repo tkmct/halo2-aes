@@ -178,10 +178,10 @@ impl FixedAes128Config {
             )?;
             round_out.append(&mut tmp);
         }
-        println!("Round0");
-        round_out.iter().for_each(|cell| {
-            println!(" {:?}", cell.value());
-        });
+        // println!("Round0");
+        // round_out.iter().for_each(|cell| {
+        //     println!(" {:?}", cell.value());
+        // });
 
         // we have 4 words in round_out vec.
         for no_round in 1..11 {
@@ -227,10 +227,10 @@ impl FixedAes128Config {
                             .collect::<Result<Vec<_>, Error>>()
                         })
                         .collect::<Result<Vec<Vec<_>>, Error>>()?;
-                    println!("S_BOX ");
-                    subbed
-                        .iter()
-                        .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
+                    // println!("S_BOX ");
+                    // subbed
+                    //     .iter()
+                    //     .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
 
                     let mut offset = 32;
 

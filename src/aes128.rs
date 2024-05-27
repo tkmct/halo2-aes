@@ -18,11 +18,11 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct FixedAes128Config {
     key: Option<[u8; 16]>,
-    key_schedule_config: Aes128KeyScheduleConfig,
-    u8_xor_table_config: U8XorTableConfig,
-    sbox_table_config: SboxTableConfig,
-    mul2_table_config: PolyMulBy2TableConfig,
-    mul3_table_config: PolyMulBy3TableConfig,
+    pub key_schedule_config: Aes128KeyScheduleConfig,
+    pub u8_xor_table_config: U8XorTableConfig,
+    pub sbox_table_config: SboxTableConfig,
+    pub mul2_table_config: PolyMulBy2TableConfig,
+    pub mul3_table_config: PolyMulBy3TableConfig,
 
     words_column: Column<Advice>,
     q_xor_bytes: Selector,
@@ -356,7 +356,7 @@ impl FixedAes128Config {
         todo!()
     }
 
-    pub(crate) fn set_key(&mut self, key: [u8; 16]) {
+    pub fn set_key(&mut self, key: [u8; 16]) {
         self.key = Some(key);
     }
 

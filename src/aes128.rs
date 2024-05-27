@@ -256,10 +256,10 @@ impl FixedAes128Config {
                         shifted.push(v);
                         offset += 4;
                     }
-                    println!("After shift");
-                    shifted
-                        .iter()
-                        .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
+                    // println!("After shift");
+                    // shifted
+                    //     .iter()
+                    //     .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
 
                     // Mixcolumns
                     // do linear transformation to the columns.
@@ -295,10 +295,10 @@ impl FixedAes128Config {
                             })
                             .collect::<Result<Vec<Vec<_>>, Error>>()?
                     };
-                    println!("After mixed");
-                    mixed
-                        .iter()
-                        .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
+                    // println!("After mixed");
+                    // mixed
+                    //     .iter()
+                    //     .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
 
                     // AddRoundKey
                     // Assign mixed and key, then take xor
@@ -343,10 +343,10 @@ impl FixedAes128Config {
                 },
             )?;
 
-            println!("Round {}", no_round);
-            round_out.iter().for_each(|cell| {
-                println!(" {:?}", cell.value());
-            });
+            // println!("Round {}", no_round);
+            // round_out.iter().for_each(|cell| {
+            //     println!(" {:?}", cell.value());
+            // });
         }
 
         Ok(round_out)
@@ -551,10 +551,9 @@ mod tests {
             config.set_key(self.key);
 
             let val = config.encrypt(layouter, self.plaintext)?;
-
-            val.iter().for_each(|cell| {
-                println!(" {:?}", cell.value());
-            });
+            // val.iter().for_each(|cell| {
+            //     println!(" {:?}", cell.value());
+            // });
 
             Ok(())
         }
@@ -575,19 +574,66 @@ mod tests {
         let mock = MockProver::run(k, &circuit, vec![]).unwrap();
         mock.assert_satisfied();
 
-        {
-            use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
-            use aes::Aes128;
+        // Expected ciphertext
+        // {
+        //     use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+        //     use aes::Aes128;
 
-            let key = GenericArray::from([0u8; 16]);
-            let mut block = GenericArray::from([0u8; 16]);
+        //     let key = GenericArray::from([0u8; 16]);
+        //     let mut block = GenericArray::from([0u8; 16]);
 
-            // Initialize cipher
-            let cipher = Aes128::new(&key);
-            cipher.encrypt_block(&mut block);
-            block.iter().for_each(|v| {
-                println!("{:02X?}", v);
-            });
-        }
+        //     // Initialize cipher
+        //     let cipher = Aes128::new(&key);
+        //     cipher.encrypt_block(&mut block);
+        //     block.iter().for_each(|v| {
+        //         println!("{:02X?}", v);
+        //     });
+        // }
+    }
+
+    #[cfg(feature = "dev-graph")]
+    #[test]
+    fn print_aes_encrypt() {
+        use plotters::prelude::*;
+
+        let k = 18;
+        let circuit = TestAesCircuit {
+            key: [0u8; 16],
+            plaintext: [0u8; 16],
+        };
+
+        let root =
+            BitMapBackend::new("prints/aes128-layout.png", (2048, 32768)).into_drawing_area();
+        root.fill(&WHITE).unwrap();
+        let root = root
+            .titled("AES128 Key schedule circuit", ("sans-serif", 60))
+            .unwrap();
+
+        halo2_proofs::dev::CircuitLayout::default()
+            .render(k, &circuit, &root)
+            .unwrap();
+    }
+
+    #[cfg(feature = "cost-estimator")]
+    #[test]
+    fn cost_estimate_aes_encrypt() {
+        use halo2_proofs::dev::cost_model::{from_circuit_to_model_circuit, CommitmentScheme};
+
+        let k = 18;
+        let circuit = TestAesCircuit {
+            key: [0u8; 16],
+            plaintext: [0u8; 16],
+        };
+
+        let model = from_circuit_to_model_circuit::<_, _, 56, 56>(
+            k,
+            &circuit,
+            vec![],
+            CommitmentScheme::KZGGWC,
+        );
+        println!(
+            "Cost of AES128 Encryption: \n{}",
+            serde_json::to_string_pretty(&model).unwrap()
+        );
     }
 }

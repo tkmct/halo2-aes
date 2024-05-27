@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use halo2_aes::key_schedule::Aes128KeyScheduleConfig;
+use halo2_aes::FixedAes128Config;
 
 use ark_std::{end_timer, start_timer};
 use halo2_proofs::{
@@ -20,42 +20,34 @@ use rand::rngs::OsRng;
 const SAMPLE_SIZE: usize = 10;
 
 #[derive(Clone, Copy)]
-struct Aes128KeyScheduleBenchCircuit {
+struct Aes128BenchCircuit {
     key: [u8; 16],
+    plaintext: [u8; 16],
 }
 
-impl Circuit<Fp> for Aes128KeyScheduleBenchCircuit {
-    type Config = Aes128KeyScheduleConfig;
+impl Circuit<Fp> for Aes128BenchCircuit {
+    type Config = FixedAes128Config;
     type FloorPlanner = SimpleFloorPlanner;
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
-        Aes128KeyScheduleConfig::configure(meta)
+        FixedAes128Config::configure(meta)
     }
 
     fn synthesize(
         &self,
-        config: Self::Config,
+        mut config: Self::Config,
         mut layouter: impl Layouter<Fp>,
     ) -> Result<(), Error> {
         config.u8_xor_table_config.load(&mut layouter)?;
         config.sbox_table_config.load(&mut layouter)?;
-        config.range_config.table.load(&mut layouter)?;
+        config.key_schedule_config.load(&mut layouter);
 
-        let words =
-            config.schedule_keys(&mut layouter.namespace(|| "AES128 schedule key"), self.key)?;
-        // constraint range_check for every byte in the words
-        let mut i = 0;
-        for word in words {
-            for byte in word {
-                // range chip
-                config.range_config.assign(
-                    layouter.namespace(|| format!("range_check for word {}", i)),
-                    &byte,
-                )?;
+        config.mul2_table_config.load(&mut layouter)?;
+        config.mul3_table_config.load(&mut layouter)?;
 
-                i += 1;
-            }
-        }
+        config.set_key(self.key);
+
+        let val = config.encrypt(layouter, self.plaintext)?;
 
         Ok(())
     }
@@ -79,11 +71,14 @@ fn setup_params<C: Circuit<Fp>>(
     (params, pk, vk)
 }
 
-fn prove_aes128_key_schedule_circuit(_c: &mut Criterion) {
+fn prove_aes128_circuit(_c: &mut Criterion) {
     let mut criterion = Criterion::default().sample_size(SAMPLE_SIZE);
-    let circuit = Aes128KeyScheduleBenchCircuit { key: [0u8; 16] };
+    let circuit = Aes128BenchCircuit {
+        key: [0u8; 16],
+        plaintext: [0u8; 16],
+    };
     let (params, pk, _) = setup_params(17, circuit.clone());
-    let bench_name = format!("prove key scheduling for AES128");
+    let bench_name = format!("prove AES128 encryption");
 
     criterion.bench_function(&bench_name, |b| {
         b.iter(|| {
@@ -110,5 +105,5 @@ fn prove_aes128_key_schedule_circuit(_c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, prove_aes128_key_schedule_circuit,);
+criterion_group!(benches, prove_aes128_circuit,);
 criterion_main!(benches);

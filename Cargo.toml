@@ -27,6 +27,10 @@ ark-std = { version = "0.4.0", features = ["print-trace"] }
 name = "key_schedule"
 harness = false
 
+[[bench]]
+name = "aes128"
+harness = false
+
 
 [profile.dev]
 opt-level = 3

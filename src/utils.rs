@@ -1,6 +1,7 @@
-use halo2_proofs::{circuit::Value, halo2curves::bn256::Fr as Fp, plonk::Error};
-
-use crate::table::s_box::S_BOX;
+use crate::{
+    halo2_proofs::{circuit::Value, halo2curves::bn256::Fr as Fp},
+    table::s_box::S_BOX,
+};
 
 /// Calculate xor of given two bytes.
 /// Returns the new value
@@ -48,7 +49,7 @@ pub(crate) fn get_round_constant(round: u32) -> Value<Fp> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use halo2_proofs::{circuit::Value, halo2curves::bn256::Fr as Fp};
+    use crate::halo2_proofs::{circuit::Value, halo2curves::bn256::Fr as Fp};
 
     #[test]
     fn test_xor_bytes() {

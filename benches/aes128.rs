@@ -1,19 +1,21 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use halo2_aes::FixedAes128Config;
 
 use ark_std::{end_timer, start_timer};
-use halo2_proofs::{
-    circuit::{Layouter, SimpleFloorPlanner},
-    halo2curves::bn256::{Bn256, Fr as Fp, G1Affine},
-    plonk::{
-        create_proof, keygen_pk, keygen_vk, Circuit, ConstraintSystem, Error, ProvingKey,
-        VerifyingKey,
+use halo2_aes::{
+    halo2_proofs::{
+        circuit::{Layouter, SimpleFloorPlanner},
+        halo2curves::bn256::{Bn256, Fr as Fp, G1Affine},
+        plonk::{
+            create_proof, keygen_pk, keygen_vk, Circuit, ConstraintSystem, Error, ProvingKey,
+            VerifyingKey,
+        },
+        poly::kzg::{
+            commitment::{KZGCommitmentScheme, ParamsKZG},
+            multiopen::ProverSHPLONK,
+        },
+        transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer},
     },
-    poly::kzg::{
-        commitment::{KZGCommitmentScheme, ParamsKZG},
-        multiopen::ProverSHPLONK,
-    },
-    transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer},
+    FixedAes128Config,
 };
 use rand::rngs::OsRng;
 

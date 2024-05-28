@@ -1,4 +1,4 @@
-use halo2_proofs::{
+use crate::halo2_proofs::{
     circuit::{AssignedCell, Layouter, Value},
     halo2curves::bn256::Fr as Fp,
     plonk::{Advice, Column, ConstraintSystem, Error, Selector, TableColumn},
@@ -82,10 +82,11 @@ impl U8RangeTableConfig {
 }
 
 #[cfg(test)]
+#[cfg(feature = "halo2-pse")]
 mod tests {
     use super::*;
 
-    use halo2_proofs::{
+    use crate::halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner, Value},
         dev::{FailureLocation, MockProver, VerifyFailure},
         halo2curves::bn256::Fr as Fp,

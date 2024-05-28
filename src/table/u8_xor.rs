@@ -1,4 +1,4 @@
-use halo2_proofs::{
+use crate::halo2_proofs::{
     circuit::{Layouter, Value},
     halo2curves::bn256::Fr as Fp,
     plonk::{ConstraintSystem, Error, TableColumn},

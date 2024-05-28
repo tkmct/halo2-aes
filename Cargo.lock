@@ -713,10 +713,28 @@ dependencies = [
  "aes",
  "ark-std",
  "criterion",
- "halo2_proofs",
+ "halo2_proofs 0.2.0",
+ "halo2_proofs 0.3.0",
  "plotters",
  "rand",
  "serde_json",
+]
+
+[[package]]
+name = "halo2_proofs"
+version = "0.2.0"
+source = "git+https://github.com/han0110/halo2.git?branch=feature/for-benchmark#4981b8d5bdaab04af9b56a5d2c482b6eec9f7fa4"
+dependencies = [
+ "ark-std",
+ "blake2b_simd",
+ "ff",
+ "group",
+ "halo2curves 0.3.3",
+ "rand_chacha",
+ "rand_core",
+ "rayon",
+ "sha3",
+ "tracing",
 ]
 
 [[package]]
@@ -727,7 +745,7 @@ dependencies = [
  "blake2b_simd",
  "ff",
  "group",
- "halo2curves",
+ "halo2curves 0.6.1",
  "plotters",
  "rand_chacha",
  "rand_core",
@@ -737,6 +755,24 @@ dependencies = [
  "sha3",
  "tabbycat",
  "tracing",
+]
+
+[[package]]
+name = "halo2curves"
+version = "0.3.3"
+source = "git+https://github.com/privacy-scaling-explorations/halo2curves?tag=0.3.3#8e4cb9f0c66c864e8ca25da07f50ae95f664a5b7"
+dependencies = [
+ "ff",
+ "group",
+ "lazy_static",
+ "num-bigint",
+ "num-traits",
+ "pasta_curves",
+ "paste",
+ "rand",
+ "rand_core",
+ "static_assertions",
+ "subtle",
 ]
 
 [[package]]

@@ -2,7 +2,7 @@
 //! It is used to calculate MixColumns operations in AES encryption and decryption.
 //! These operations can be done using lookup tables with length 256.
 
-use halo2_proofs::{
+use crate::halo2_proofs::{
     circuit::{Layouter, Value},
     halo2curves::bn256::Fr as Fp,
     plonk::{ConstraintSystem, Error, TableColumn},

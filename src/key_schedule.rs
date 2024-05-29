@@ -7,14 +7,13 @@
 //!
 //! Key expansion
 
-use halo2_proofs::{
-    circuit::{AssignedCell, Layouter, Value},
-    halo2curves::bn256::Fr as Fp,
-    plonk::{Advice, Column, ConstraintSystem, Error, Fixed, Selector},
-    poly::Rotation,
-};
-
 use crate::{
+    halo2_proofs::{
+        circuit::{AssignedCell, Layouter, Value},
+        halo2curves::bn256::Fr as Fp,
+        plonk::{Advice, Column, ConstraintSystem, Error, Fixed, Selector},
+        poly::Rotation,
+    },
     table::{s_box::SboxTableConfig, u8_range_check::U8RangeCheckConfig, u8_xor::U8XorTableConfig},
     utils::{get_round_constant, sub_word, xor_bytes, xor_words},
 };
@@ -363,10 +362,11 @@ impl Aes128KeyScheduleConfig {
 }
 
 #[cfg(test)]
+#[cfg(feature = "halo2-pse")]
 mod tests {
     use super::*;
 
-    use halo2_proofs::{
+    use crate::halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::{CellValue, MockProver},
         halo2curves::bn256::Fr as Fp,

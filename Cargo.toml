@@ -4,15 +4,20 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+default = ["halo2-pse"]
 dev-graph = ["halo2_proofs/dev-graph", "plotters"]
 cost-estimator = ["halo2_proofs/cost-estimator"]
+halo2-pse = ["halo2_proofs"]
+hyperplonk = ["halo2_proofs_hyperplonk"]
 
 [dependencies]
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0", features = [
   "derive_serde",
   "dev-graph",
   "cost-estimator",
-] }
+], optional = true }
+halo2_proofs_hyperplonk = { git = "https://github.com/han0110/halo2.git", branch = "feature/for-benchmark", package = "halo2_proofs", optional = true }
+
 aes = "0.8.4"
 plotters = { version = "0.3.5", optional = true }
 
@@ -26,10 +31,12 @@ ark-std = { version = "0.4.0", features = ["print-trace"] }
 [[bench]]
 name = "key_schedule"
 harness = false
+required-features = ["halo2-pse"]
 
 [[bench]]
 name = "aes128"
 harness = false
+required-features = ["halo2-pse"]
 
 
 [profile.dev]

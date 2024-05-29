@@ -1,11 +1,10 @@
-use halo2_proofs::{
-    circuit::{AssignedCell, Layouter, Region, Value},
-    halo2curves::bn256::Fr as Fp,
-    plonk::{Advice, Column, ConstraintSystem, Error, Selector},
-    poly::Rotation,
-};
-
 use crate::{
+    halo2_proofs::{
+        circuit::{AssignedCell, Layouter, Region, Value},
+        halo2curves::bn256::Fr as Fp,
+        plonk::{Advice, Column, ConstraintSystem, Error, Selector},
+        poly::Rotation,
+    },
     key_schedule::Aes128KeyScheduleConfig,
     table::{
         gf_mul::{PolyMulBy2TableConfig, PolyMulBy3TableConfig, MUL_BY_2, MUL_BY_3},
@@ -515,7 +514,7 @@ impl FixedAes128Config {
 mod tests {
     use super::*;
 
-    use halo2_proofs::{
+    use crate::halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
         dev::MockProver,
         halo2curves::bn256::Fr as Fp,
@@ -564,6 +563,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "halo2-pse")]
     fn test_correct_encryption() {
         let k = 18;
         let circuit = TestAesCircuit {

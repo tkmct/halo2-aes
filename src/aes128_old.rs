@@ -14,51 +14,6 @@ use crate::{
     utils::{sub_word, xor_bytes},
 };
 
-/*
-SomeCircuit {
-    configure() {
-    }
-
-    synthesize() {
-        let aes_gadget = Aes128Chip::construct()
-
-
-        // calculate aes
-        // compute aes expanded key
-        let expanded_keys = schedule_keys(key);
-
-        // use the expanded key and encrypt
-        let encrypted = aes128.encrypt(expanded_keys, plaintext);
-
-        Ok(())
-    }
-}
-
-
-
-Aes128Config {
-    KeyScheduleConfig,
-    EncryptionConfig,
-}
-
-Aes128Chip {}
-
-/// in Circuit#synthesize()
-// config: (Aes128KeyScheduleConfig, Aes128EncryptionConfig)
-
-let key_schedule_chip = Aes128KeyScheduleChip::construct(config.0);
-let encryption_chip = Aes128EncryptionChip::construct(config.1);
-
-// compute aes encryption
-
-gadgets::aes128_encrypt(
-
-);
-
-
-
- */
-
 #[derive(Clone, Debug)]
 pub struct FixedAes128Config {
     key: Option<[u8; 16]>,
@@ -78,100 +33,99 @@ pub struct FixedAes128Config {
 
 impl FixedAes128Config {
     pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
-        todo!();
-        // let key_schedule_config = Aes128KeyScheduleConfig::configure(meta);
-        // let u8_xor_table_config = U8XorTableConfig::configure(meta);
-        // let sbox_table_config = SboxTableConfig::configure(meta);
-        // let mul2_table_config = PolyMulBy2TableConfig::configure(meta);
-        // let mul3_table_config = PolyMulBy3TableConfig::configure(meta);
+        let key_schedule_config = Aes128KeyScheduleConfig::configure(meta);
+        let u8_xor_table_config = U8XorTableConfig::configure(meta);
+        let sbox_table_config = SboxTableConfig::configure(meta);
+        let mul2_table_config = PolyMulBy2TableConfig::configure(meta);
+        let mul3_table_config = PolyMulBy3TableConfig::configure(meta);
 
-        // let words_column = meta.advice_column();
-        // let q_xor_bytes = meta.complex_selector();
-        // let q_xor_adj = meta.complex_selector();
-        // let q_sub_bytes = meta.complex_selector();
-        // let q_mul_by_2 = meta.complex_selector();
-        // let q_mul_by_3 = meta.complex_selector();
+        let words_column = meta.advice_column();
+        let q_xor_bytes = meta.complex_selector();
+        let q_xor_adj = meta.complex_selector();
+        let q_sub_bytes = meta.complex_selector();
+        let q_mul_by_2 = meta.complex_selector();
+        let q_mul_by_3 = meta.complex_selector();
 
-        // meta.enable_equality(words_column);
+        meta.enable_equality(words_column);
 
-        // meta.lookup("XOR Bytes", |meta| {
-        //     let q = meta.query_selector(q_xor_bytes);
+        meta.lookup("XOR Bytes", |meta| {
+            let q = meta.query_selector(q_xor_bytes);
 
-        //     let x = meta.query_advice(words_column, Rotation::cur());
-        //     let y = meta.query_advice(words_column, Rotation(4));
-        //     let z = meta.query_advice(words_column, Rotation(8));
+            let x = meta.query_advice(words_column, Rotation::cur());
+            let y = meta.query_advice(words_column, Rotation(4));
+            let z = meta.query_advice(words_column, Rotation(8));
 
-        //     vec![
-        //         (q.clone() * x, u8_xor_table_config.x),
-        //         (q.clone() * y, u8_xor_table_config.y),
-        //         (q.clone() * z, u8_xor_table_config.z),
-        //     ]
-        // });
+            vec![
+                (q.clone() * x, u8_xor_table_config.x),
+                (q.clone() * y, u8_xor_table_config.y),
+                (q.clone() * z, u8_xor_table_config.z),
+            ]
+        });
 
-        // meta.lookup("XOR Adjacent Bytes", |meta| {
-        //     let q = meta.query_selector(q_xor_adj);
+        meta.lookup("XOR Adjacent Bytes", |meta| {
+            let q = meta.query_selector(q_xor_adj);
 
-        //     let x = meta.query_advice(words_column, Rotation::cur());
-        //     let y = meta.query_advice(words_column, Rotation(1));
-        //     let z = meta.query_advice(words_column, Rotation(2));
+            let x = meta.query_advice(words_column, Rotation::cur());
+            let y = meta.query_advice(words_column, Rotation(1));
+            let z = meta.query_advice(words_column, Rotation(2));
 
-        //     vec![
-        //         (q.clone() * x, u8_xor_table_config.x),
-        //         (q.clone() * y, u8_xor_table_config.y),
-        //         (q.clone() * z, u8_xor_table_config.z),
-        //     ]
-        // });
+            vec![
+                (q.clone() * x, u8_xor_table_config.x),
+                (q.clone() * y, u8_xor_table_config.y),
+                (q.clone() * z, u8_xor_table_config.z),
+            ]
+        });
 
-        // // Constraints sub bytes
-        // meta.lookup("Sub Bytes", |meta| {
-        //     let q = meta.query_selector(q_sub_bytes);
-        //     let rot_byte = meta.query_advice(words_column, Rotation::cur());
-        //     let subbed_byte = meta.query_advice(words_column, Rotation(4));
+        // Constraints sub bytes
+        meta.lookup("Sub Bytes", |meta| {
+            let q = meta.query_selector(q_sub_bytes);
+            let rot_byte = meta.query_advice(words_column, Rotation::cur());
+            let subbed_byte = meta.query_advice(words_column, Rotation(4));
 
-        //     vec![
-        //         (q.clone() * rot_byte, sbox_table_config.x),
-        //         (q.clone() * subbed_byte, sbox_table_config.y),
-        //     ]
-        // });
+            vec![
+                (q.clone() * rot_byte, sbox_table_config.x),
+                (q.clone() * subbed_byte, sbox_table_config.y),
+            ]
+        });
 
-        // // Constraints MUL by 2
-        // meta.lookup("Mul by 2", |meta| {
-        //     let q = meta.query_selector(q_mul_by_2);
-        //     let prev = meta.query_advice(words_column, Rotation::cur());
-        //     let new = meta.query_advice(words_column, Rotation::next());
+        // Constraints MUL by 2
+        meta.lookup("Mul by 2", |meta| {
+            let q = meta.query_selector(q_mul_by_2);
+            let prev = meta.query_advice(words_column, Rotation::cur());
+            let new = meta.query_advice(words_column, Rotation::next());
 
-        //     vec![
-        //         (q.clone() * prev, mul2_table_config.x),
-        //         (q.clone() * new, mul2_table_config.y),
-        //     ]
-        // });
+            vec![
+                (q.clone() * prev, mul2_table_config.x),
+                (q.clone() * new, mul2_table_config.y),
+            ]
+        });
 
-        // // Constraints MUL by 3
-        // meta.lookup("Mul by 3", |meta| {
-        //     let q = meta.query_selector(q_mul_by_3);
-        //     let prev = meta.query_advice(words_column, Rotation::cur());
-        //     let new = meta.query_advice(words_column, Rotation::next());
+        // Constraints MUL by 3
+        meta.lookup("Mul by 3", |meta| {
+            let q = meta.query_selector(q_mul_by_3);
+            let prev = meta.query_advice(words_column, Rotation::cur());
+            let new = meta.query_advice(words_column, Rotation::next());
 
-        //     vec![
-        //         (q.clone() * prev, mul3_table_config.x),
-        //         (q.clone() * new, mul3_table_config.y),
-        //     ]
-        // });
+            vec![
+                (q.clone() * prev, mul3_table_config.x),
+                (q.clone() * new, mul3_table_config.y),
+            ]
+        });
 
-        // Self {
-        //     key: None,
-        //     key_schedule_config,
-        //     u8_xor_table_config,
-        //     sbox_table_config,
-        //     mul2_table_config,
-        //     mul3_table_config,
-        //     words_column,
-        //     q_xor_bytes,
-        //     q_xor_adj,
-        //     q_sub_bytes,
-        //     q_mul_by_2,
-        //     q_mul_by_3,
-        // }
+        Self {
+            key: None,
+            key_schedule_config,
+            u8_xor_table_config,
+            sbox_table_config,
+            mul2_table_config,
+            mul3_table_config,
+            words_column,
+            q_xor_bytes,
+            q_xor_adj,
+            q_sub_bytes,
+            q_mul_by_2,
+            q_mul_by_3,
+        }
     }
 
     pub fn encrypt(

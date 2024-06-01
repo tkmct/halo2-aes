@@ -31,7 +31,8 @@ impl Circuit<Fp> for Aes128KeyScheduleBenchCircuit {
     type FloorPlanner = SimpleFloorPlanner;
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
-        Aes128KeyScheduleConfig::configure(meta)
+        todo!()
+        // Aes128KeyScheduleConfig::configure(meta)
     }
 
     fn synthesize(

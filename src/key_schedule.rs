@@ -8,6 +8,10 @@
 //! Key expansion
 
 use crate::{
+    chips::{
+        sbox_chip::{SboxChip, SboxConfig},
+        u8_xor_chip::{U8XorChip, U8XorConfig},
+    },
     halo2_proofs::{
         circuit::{AssignedCell, Layouter, Value},
         halo2curves::bn256::Fr as Fp,
@@ -28,15 +32,33 @@ pub struct Aes128KeyScheduleConfig {
     words_column: Column<Advice>,
     // Round constant to XOR for the
     round_constants: Column<Fixed>,
-
     q_sub_bytes: Selector,
     q_xor_bytes: Selector,
     q_eq_rcon: Selector,
+
+    x: Column<Advice>,
+    y: Column<Advice>,
+    z: Column<Advice>,
+    q_xor: Selector,
+    u8_xor_config: U8XorConfig,
+    q_sbox: Selector,
+    sbox_config: SboxConfig,
 }
 
 impl Aes128KeyScheduleConfig {
     /// Configure key expansion chip
-    pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
+    pub fn configure(
+        meta: &mut ConstraintSystem<Fp>,
+        advices: [Column<Advice>; 3],
+        u8_xor_config: U8XorConfig,
+        sbox_config: SboxConfig,
+    ) -> Self {
+        let q_xor = meta.complex_selector();
+        let u8_xor_table_config = U8XorTableConfig::configure(meta);
+
+        let q_sbox = meta.complex_selector();
+        let sbox_table_config = SboxTableConfig::configure(meta);
+
         // constraint the each byte is in the u8 range -> range chip
         let words_column = meta.advice_column();
 
@@ -46,8 +68,6 @@ impl Aes128KeyScheduleConfig {
         let q_sub_bytes = meta.complex_selector();
         let q_eq_rcon = meta.selector();
 
-        let u8_xor_table_config = U8XorTableConfig::configure(meta);
-        let sbox_table_config = SboxTableConfig::configure(meta);
         let range_config = U8RangeCheckConfig::configure(meta, words_column);
 
         meta.enable_equality(words_column);
@@ -95,6 +115,14 @@ impl Aes128KeyScheduleConfig {
             u8_xor_table_config,
             sbox_table_config,
             range_config,
+
+            x: advices[0],
+            y: advices[1],
+            z: advices[2],
+            q_xor,
+            u8_xor_config,
+            q_sbox,
+            sbox_config,
         }
     }
 
@@ -160,15 +188,78 @@ impl Aes128KeyScheduleConfig {
         round: u32,
         prev_round_bytes: Vec<AssignedCell<Fp, Fp>>,
     ) -> Result<Vec<AssignedCell<Fp, Fp>>, Error> {
+        let xor_chip = U8XorChip::construct(self.u8_xor_config);
+        let sbox_chip = SboxChip::construct(self.sbox_config);
+
+        // current position in the words_column
+        let mut pos = 0;
+
+        // resulting words == 44 words = 176 byte
+        let mut words: Vec<AssignedCell<Fp, Fp>> = vec![];
+
+        // assign prev word
+        // copy prev word = last 4 byte of prev_round
+        // prev_word is rotated one byte left-shift
+        let shifted = layouter.assign_region(
+            || "substitute previous round",
+            |mut region| {
+                vec![13usize, 14, 15, 12]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &v)| {
+                        prev_round_bytes[v].copy_advice(
+                            || "Copy word from prev_round",
+                            &mut region,
+                            self.words_column,
+                            i,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, Error>>()
+            },
+        )?;
+
+        let subbed = shifted
+            .iter()
+            .map(|byte| sbox_chip.substitute(layouter, byte))
+            .collect::<Result<Vec<_>, Error>>()?;
+
+        let rc = get_round_constant(round - 1);
+        let rc_assigned = layouter.assign_region(
+            || "Assign rc",
+            |mut region| {
+                let mut res = vec![];
+                // copy fixed to advice
+                // check equality of fixed and advice
+                region.assign_fixed(|| "Assign round constants", self.round_constants, 0, || rc)?;
+                res.push(region.assign_advice(
+                    || "Copy fixed value to words_column",
+                    self.words_column,
+                    0,
+                    || rc,
+                )?);
+
+                for i in 0..3 {
+                    res.push(region.assign_advice(
+                        || "Pad 0",
+                        self.words_column,
+                        i + 1,
+                        || Value::known(Fp::from(0)),
+                    )?);
+                }
+
+                Ok(res)
+            },
+        )?;
+
+        let rconned = subbed
+            .iter()
+            .zip(rc_assigned)
+            .map(|(s, r)| xor_chip.xor(layouter, &s, &r))
+            .collect::<Result<Vec<_>, Error>>()?;
+
         layouter.assign_region(
             || "Assign words",
             |mut region| {
-                // current position in the words_column
-                let mut pos = 0;
-
-                // resulting words == 44 words = 176 byte
-                let mut words: Vec<AssignedCell<Fp, Fp>> = vec![];
-
                 // copy prev word = last 4 byte of prev_round
                 // prev_word is rotated one byte left-shift
                 let prev_word = vec![13usize, 14, 15, 12]
@@ -355,9 +446,10 @@ impl Aes128KeyScheduleConfig {
                     words.append(&mut word.clone());
                 }
 
-                Ok(words)
+                Ok(())
             },
-        )
+        )?;
+        Ok(words)
     }
 }
 
@@ -383,7 +475,30 @@ mod tests {
         type FloorPlanner = SimpleFloorPlanner;
 
         fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
-            Aes128KeyScheduleConfig::configure(meta)
+            // We have table columns in  this config
+            let u8_xor_table_config = U8XorTableConfig::configure(meta);
+            let sbox_table_config = SboxTableConfig::configure(meta);
+
+            let advices = [
+                meta.advice_column(),
+                meta.advice_column(),
+                meta.advice_column(),
+            ];
+            let q_u8_xor = meta.complex_selector();
+            let q_sbox = meta.complex_selector();
+
+            let u8_xor_config = U8XorChip::configure(
+                meta,
+                advices[0],
+                advices[1],
+                advices[2],
+                q_u8_xor,
+                u8_xor_table_config,
+            );
+            let sbox_config =
+                SboxChip::configure(meta, advices[0], advices[1], q_sbox, sbox_table_config);
+
+            Aes128KeyScheduleConfig::configure(meta, advices, u8_xor_config, sbox_config)
         }
 
         fn synthesize(

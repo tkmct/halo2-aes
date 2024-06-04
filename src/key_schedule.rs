@@ -10,6 +10,7 @@
 use crate::{
     chips::{
         sbox_chip::{SboxChip, SboxConfig},
+        u8_range_check_chip::{U8RangeCheckChip, U8RangeCheckConfig},
         u8_xor_chip::{U8XorChip, U8XorConfig},
     },
     halo2_proofs::{
@@ -18,22 +19,18 @@ use crate::{
         plonk::{Advice, Column, ConstraintSystem, Error, Fixed, Selector},
         poly::Rotation,
     },
-    table::{s_box::SboxTableConfig, u8_range_check::U8RangeCheckConfig, u8_xor::U8XorTableConfig},
     utils::get_round_constant,
 };
 
 #[derive(Clone, Debug)]
 pub struct Aes128KeyScheduleConfig {
-    pub sbox_table_config: SboxTableConfig,
-    pub u8_xor_table_config: U8XorTableConfig,
-    pub range_config: U8RangeCheckConfig,
-
     words_column: Column<Advice>,
     round_constants: Column<Fixed>,
 
     q_eq_rcon: Selector,
     advices: [Column<Advice>; 3],
 
+    u8_range_check_config: U8RangeCheckConfig,
     u8_xor_config: U8XorConfig,
     sbox_config: SboxConfig,
 }
@@ -45,15 +42,12 @@ impl Aes128KeyScheduleConfig {
         advices: [Column<Advice>; 3],
         u8_xor_config: U8XorConfig,
         sbox_config: SboxConfig,
+        u8_range_check_config: U8RangeCheckConfig,
     ) -> Self {
-        let u8_xor_table_config = U8XorTableConfig::configure(meta);
-        let sbox_table_config = SboxTableConfig::configure(meta);
-
         // constraint the each byte is in the u8 range -> range chip
         let words_column = meta.advice_column();
         let round_constants = meta.fixed_column();
         let q_eq_rcon = meta.selector();
-        let range_config = U8RangeCheckConfig::configure(meta, words_column);
 
         advices.iter().for_each(|advice| {
             meta.enable_equality(*advice);
@@ -74,27 +68,12 @@ impl Aes128KeyScheduleConfig {
             round_constants,
 
             q_eq_rcon,
-            u8_xor_table_config,
-            sbox_table_config,
-            range_config,
 
             advices,
+            u8_range_check_config,
             u8_xor_config,
             sbox_config,
         }
-    }
-
-    pub fn load(&self, layouter: &mut impl Layouter<Fp>) {
-        self.u8_xor_table_config
-            .load(layouter)
-            .expect("Load table should not fail");
-        self.sbox_table_config
-            .load(layouter)
-            .expect("Load table should not fail");
-        self.range_config
-            .table
-            .load(layouter)
-            .expect("Load table should not fail");
     }
 
     /// Expand given 4 words key to 44 words key where each AssignedCell<Fp,Fp> represent a byte.
@@ -148,6 +127,7 @@ impl Aes128KeyScheduleConfig {
     ) -> Result<Vec<AssignedCell<Fp, Fp>>, Error> {
         let xor_chip = U8XorChip::construct(self.u8_xor_config);
         let sbox_chip = SboxChip::construct(self.sbox_config);
+        let range_chip = U8RangeCheckChip::construct(self.u8_range_check_config);
 
         // resulting words == 44 words = 176 byte
         let mut words: Vec<AssignedCell<Fp, Fp>> = vec![];
@@ -223,7 +203,6 @@ impl Aes128KeyScheduleConfig {
 
         words.append(&mut next_word.clone());
 
-        // ====
         // consecutive 3 words
         for i in 1..4 {
             next_word = prev_round_bytes
@@ -236,6 +215,11 @@ impl Aes128KeyScheduleConfig {
             words.append(&mut next_word.clone());
         }
 
+        words
+            .iter()
+            .map(|byte| range_chip.range_check(layouter, &byte))
+            .collect::<Result<Vec<_>, Error>>()?;
+
         Ok(words)
     }
 }
@@ -243,13 +227,20 @@ impl Aes128KeyScheduleConfig {
 #[cfg(test)]
 #[cfg(feature = "halo2-pse")]
 mod tests {
+
     use super::*;
 
-    use crate::halo2_proofs::{
-        circuit::{Layouter, SimpleFloorPlanner},
-        dev::{CellValue, MockProver},
-        halo2curves::bn256::Fr as Fp,
-        plonk::{Circuit, ConstraintSystem, Error},
+    use crate::{
+        halo2_proofs::{
+            circuit::{Layouter, SimpleFloorPlanner},
+            dev::{CellValue, MockProver},
+            halo2curves::bn256::Fr as Fp,
+            plonk::{Circuit, ConstraintSystem, Error},
+        },
+        table::{
+            s_box::SboxTableConfig, u8_range_check::U8RangeCheckTableConfig,
+            u8_xor::U8XorTableConfig,
+        },
     };
 
     #[derive(Clone)]
@@ -257,23 +248,39 @@ mod tests {
         key: [u8; 16],
     }
 
+    // Tables used by the whole circuit
+    #[derive(Clone)]
+    struct Tables {
+        pub u8_xor: U8XorTableConfig,
+        pub sbox: SboxTableConfig,
+        pub u8_range_check: U8RangeCheckTableConfig,
+    }
+
     impl Circuit<Fp> for TestCircuit {
-        type Config = Aes128KeyScheduleConfig;
+        type Config = (Aes128KeyScheduleConfig, Tables);
         type FloorPlanner = SimpleFloorPlanner;
 
         fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
             // We have table columns in  this config
             let u8_xor_table_config = U8XorTableConfig::configure(meta);
             let sbox_table_config = SboxTableConfig::configure(meta);
+            let u8_range_check_table_config = U8RangeCheckTableConfig::configure(meta);
 
             let advices = [
                 meta.advice_column(),
                 meta.advice_column(),
                 meta.advice_column(),
             ];
+            let q_u8_range_check = meta.complex_selector();
             let q_u8_xor = meta.complex_selector();
             let q_sbox = meta.complex_selector();
 
+            let u8_range_check_config = U8RangeCheckChip::configure(
+                meta,
+                advices[0],
+                q_u8_range_check,
+                u8_range_check_table_config,
+            );
             let u8_xor_config = U8XorChip::configure(
                 meta,
                 advices[0],
@@ -285,7 +292,20 @@ mod tests {
             let sbox_config =
                 SboxChip::configure(meta, advices[0], advices[1], q_sbox, sbox_table_config);
 
-            Aes128KeyScheduleConfig::configure(meta, advices, u8_xor_config, sbox_config)
+            (
+                Aes128KeyScheduleConfig::configure(
+                    meta,
+                    advices,
+                    u8_xor_config,
+                    sbox_config,
+                    u8_range_check_config,
+                ),
+                Tables {
+                    u8_range_check: u8_range_check_table_config,
+                    u8_xor: u8_xor_table_config,
+                    sbox: sbox_table_config,
+                },
+            )
         }
 
         fn synthesize(
@@ -293,9 +313,12 @@ mod tests {
             config: Self::Config,
             mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
-            config.load(&mut layouter);
+            config.1.u8_range_check.load(&mut layouter)?;
+            config.1.u8_xor.load(&mut layouter)?;
+            config.1.sbox.load(&mut layouter)?;
 
             let words = config
+                .0
                 .schedule_keys(&mut layouter.namespace(|| "AES128 schedule key"), self.key)?;
 
             // words.iter().enumerate().for_each(|(i, word)| {
@@ -304,20 +327,6 @@ mod tests {
             //         println!("{:?}", byte.value_field().evaluate());
             //     });
             // });
-
-            // constraint range_check for every byte in the words
-            let mut i = 0;
-            for word in words {
-                for byte in word {
-                    // range chip
-                    config.range_config.assign(
-                        layouter.namespace(|| format!("range_check for word {}", i)),
-                        &byte,
-                    )?;
-
-                    i += 1;
-                }
-            }
 
             Ok(())
         }

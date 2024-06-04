@@ -1,5 +1,5 @@
-mod aes128;
-mod chips;
+pub mod aes128;
+pub mod chips;
 pub mod key_schedule;
 mod table;
 mod utils;

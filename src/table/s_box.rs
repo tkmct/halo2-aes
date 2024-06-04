@@ -20,7 +20,7 @@ pub const S_BOX: [u8; 256] = [
     153, 45, 15, 176, 84, 187, 23,
 ];
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SboxTableConfig {
     pub(crate) x: TableColumn,
     pub(crate) y: TableColumn,

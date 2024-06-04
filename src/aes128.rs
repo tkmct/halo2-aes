@@ -78,8 +78,12 @@ pub struct FixedAes128Config {
 
 impl FixedAes128Config {
     pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
-        todo!();
+        todo!()
+        // let u8_xor_table_config = U8XorTableConfig::configure(meta);
+        // let sbox_table_config = SboxTableConfig::configure(meta);
+
         // let key_schedule_config = Aes128KeyScheduleConfig::configure(meta);
+
         // let u8_xor_table_config = U8XorTableConfig::configure(meta);
         // let sbox_table_config = SboxTableConfig::configure(meta);
         // let mul2_table_config = PolyMulBy2TableConfig::configure(meta);
@@ -588,7 +592,7 @@ mod tests {
         ) -> Result<(), Error> {
             config.u8_xor_table_config.load(&mut layouter)?;
             config.sbox_table_config.load(&mut layouter)?;
-            config.key_schedule_config.load(&mut layouter);
+            // config.key_schedule_config.load(&mut layouter);
 
             config.mul2_table_config.load(&mut layouter)?;
             config.mul3_table_config.load(&mut layouter)?;

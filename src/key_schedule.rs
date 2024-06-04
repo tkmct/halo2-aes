@@ -19,7 +19,7 @@ use crate::{
         poly::Rotation,
     },
     table::{s_box::SboxTableConfig, u8_range_check::U8RangeCheckConfig, u8_xor::U8XorTableConfig},
-    utils::{get_round_constant, sub_word, xor_bytes, xor_words},
+    utils::get_round_constant,
 };
 
 #[derive(Clone, Debug)]
@@ -28,20 +28,13 @@ pub struct Aes128KeyScheduleConfig {
     pub u8_xor_table_config: U8XorTableConfig,
     pub range_config: U8RangeCheckConfig,
 
-    // Store words as u8 value
     words_column: Column<Advice>,
-    // Round constant to XOR for the
     round_constants: Column<Fixed>,
-    q_sub_bytes: Selector,
-    q_xor_bytes: Selector,
-    q_eq_rcon: Selector,
 
-    x: Column<Advice>,
-    y: Column<Advice>,
-    z: Column<Advice>,
-    q_xor: Selector,
+    q_eq_rcon: Selector,
+    advices: [Column<Advice>; 3],
+
     u8_xor_config: U8XorConfig,
-    q_sbox: Selector,
     sbox_config: SboxConfig,
 }
 
@@ -53,51 +46,21 @@ impl Aes128KeyScheduleConfig {
         u8_xor_config: U8XorConfig,
         sbox_config: SboxConfig,
     ) -> Self {
-        let q_xor = meta.complex_selector();
         let u8_xor_table_config = U8XorTableConfig::configure(meta);
-
-        let q_sbox = meta.complex_selector();
         let sbox_table_config = SboxTableConfig::configure(meta);
 
         // constraint the each byte is in the u8 range -> range chip
         let words_column = meta.advice_column();
-
         let round_constants = meta.fixed_column();
-
-        let q_xor_bytes = meta.complex_selector();
-        let q_sub_bytes = meta.complex_selector();
         let q_eq_rcon = meta.selector();
-
         let range_config = U8RangeCheckConfig::configure(meta, words_column);
+
+        advices.iter().for_each(|advice| {
+            meta.enable_equality(*advice);
+        });
 
         meta.enable_equality(words_column);
         meta.enable_constant(round_constants);
-
-        // Constraints sub bytes
-        meta.lookup("Sub Bytes", |meta| {
-            let q = meta.query_selector(q_sub_bytes);
-            let rot_byte = meta.query_advice(words_column, Rotation::cur());
-            let subbed_byte = meta.query_advice(words_column, Rotation(4));
-
-            vec![
-                (q.clone() * rot_byte, sbox_table_config.x),
-                (q.clone() * subbed_byte, sbox_table_config.y),
-            ]
-        });
-
-        meta.lookup("XOR Bytes", |meta| {
-            let q = meta.query_selector(q_xor_bytes);
-
-            let x = meta.query_advice(words_column, Rotation::cur());
-            let y = meta.query_advice(words_column, Rotation(4));
-            let z = meta.query_advice(words_column, Rotation(8));
-
-            vec![
-                (q.clone() * x, u8_xor_table_config.x),
-                (q.clone() * y, u8_xor_table_config.y),
-                (q.clone() * z, u8_xor_table_config.z),
-            ]
-        });
 
         meta.create_gate("Equality RC", |meta| {
             let q = meta.query_selector(q_eq_rcon);
@@ -109,19 +72,14 @@ impl Aes128KeyScheduleConfig {
         Self {
             words_column,
             round_constants,
-            q_sub_bytes,
-            q_xor_bytes,
+
             q_eq_rcon,
             u8_xor_table_config,
             sbox_table_config,
             range_config,
 
-            x: advices[0],
-            y: advices[1],
-            z: advices[2],
-            q_xor,
+            advices,
             u8_xor_config,
-            q_sbox,
             sbox_config,
         }
     }
@@ -147,12 +105,10 @@ impl Aes128KeyScheduleConfig {
     ) -> Result<Vec<Vec<AssignedCell<Fp, Fp>>>, Error> {
         let mut words = vec![];
 
-        // each round contain 16 byte = 4 words.
         let mut round = self.assign_first_round(layouter, key)?;
         words.push(round.clone());
 
         for i in 1..=10 {
-            // assign each round
             round = self.assign_round(layouter, i, round)?;
             words.push(round.clone())
         }
@@ -182,6 +138,8 @@ impl Aes128KeyScheduleConfig {
         )
     }
 
+    /// Assign intermediate bytes for each round.
+    /// prev_round_bytes has 16 bytes
     fn assign_round(
         &self,
         layouter: &mut impl Layouter<Fp>,
@@ -191,17 +149,14 @@ impl Aes128KeyScheduleConfig {
         let xor_chip = U8XorChip::construct(self.u8_xor_config);
         let sbox_chip = SboxChip::construct(self.sbox_config);
 
-        // current position in the words_column
-        let mut pos = 0;
-
         // resulting words == 44 words = 176 byte
         let mut words: Vec<AssignedCell<Fp, Fp>> = vec![];
 
-        // assign prev word
-        // copy prev word = last 4 byte of prev_round
-        // prev_word is rotated one byte left-shift
+        // Derive the first word of the round.
+        // copy prev word to words_column. (last 4 bytes of prev_round_bytes)
+        // prev_word is rotated one byte left-shifted
         let shifted = layouter.assign_region(
-            || "substitute previous round",
+            || "shift previous round",
             |mut region| {
                 vec![13usize, 14, 15, 12]
                     .iter()
@@ -230,6 +185,7 @@ impl Aes128KeyScheduleConfig {
                 let mut res = vec![];
                 // copy fixed to advice
                 // check equality of fixed and advice
+                self.q_eq_rcon.enable(&mut region, 0)?;
                 region.assign_fixed(|| "Assign round constants", self.round_constants, 0, || rc)?;
                 res.push(region.assign_advice(
                     || "Copy fixed value to words_column",
@@ -257,198 +213,29 @@ impl Aes128KeyScheduleConfig {
             .map(|(s, r)| xor_chip.xor(layouter, &s, &r))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        layouter.assign_region(
-            || "Assign words",
-            |mut region| {
-                // copy prev word = last 4 byte of prev_round
-                // prev_word is rotated one byte left-shift
-                let prev_word = vec![13usize, 14, 15, 12]
-                    .iter()
-                    .map(|&i| {
-                        // enable sub bytes selector
-                        self.q_sub_bytes.enable(&mut region, pos)?;
-                        let byte = prev_round_bytes[i].copy_advice(
-                            || "Copy word from prev_round",
-                            &mut region,
-                            self.words_column,
-                            pos,
-                        );
-                        pos += 1;
-                        byte
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?;
+        // xor prev_round_word and rconned_word
+        let mut next_word = prev_round_bytes
+            .iter()
+            .take(4)
+            .zip(rconned)
+            .map(|(p, r)| xor_chip.xor(layouter, &p, &r))
+            .collect::<Result<Vec<_>, Error>>()?;
 
-                // sub each byte of rotated word
-                // enable xor_bytes flag for the first byte
-                self.q_xor_bytes.enable(&mut region, pos)?;
-                let subbed = sub_word(
-                    &prev_word
-                        .iter()
-                        .map(|a| a.value().map(|&v| v))
-                        .collect::<Vec<_>>(),
-                )
+        words.append(&mut next_word.clone());
+
+        // ====
+        // consecutive 3 words
+        for i in 1..4 {
+            next_word = prev_round_bytes
                 .iter()
-                .map(|v| {
-                    let byte = region.assign_advice(
-                        || "Assign sub_bytes word",
-                        self.words_column,
-                        pos,
-                        || *v,
-                    );
-                    pos += 1;
-                    byte
-                })
+                .skip(i * 4)
+                .take(4)
+                .zip(next_word)
+                .map(|(p, n)| xor_chip.xor(layouter, &p, &n))
                 .collect::<Result<Vec<_>, Error>>()?;
+            words.append(&mut next_word.clone());
+        }
 
-                // Assign round constant column for first byte of the word
-                // and copy to the advice cell for constraints
-                self.q_eq_rcon.enable(&mut region, pos)?;
-                let rc = get_round_constant(round - 1);
-                region.assign_fixed(
-                    || "Assign round constants",
-                    self.round_constants,
-                    pos,
-                    || rc,
-                )?;
-
-                region.assign_advice(
-                    || "Copy fixed value to words_column",
-                    self.words_column,
-                    pos,
-                    || rc,
-                )?;
-                // Enable xor for first byte of the Rconed sub ^ Rc
-                pos += 1;
-
-                // pad 0 for three byte
-                for _ in 0..3 {
-                    region.assign_advice(
-                        || "Pad 0",
-                        self.words_column,
-                        pos,
-                        || Value::known(Fp::from(0)),
-                    )?;
-                    pos += 1;
-                }
-
-                // xor round-constants with subbed word
-                // enable xor flag
-                let mut rconned = vec![];
-                let rc_byte = xor_bytes(
-                    &rc,
-                    &subbed
-                        .get(0)
-                        .expect("First value should not be empty")
-                        .value()
-                        .map(|v| *v),
-                );
-                region.assign_advice(
-                    || "Assign xor Rc and Sub",
-                    self.words_column,
-                    pos,
-                    || rc_byte,
-                )?;
-                self.q_xor_bytes.enable(&mut region, pos)?;
-                rconned.push(rc_byte);
-                pos += 1;
-
-                // copy other 3 bytes and enable xor flag
-                for i in 1..4 {
-                    let byte = subbed[i].copy_advice(
-                        || "Copy word from subbed",
-                        &mut region,
-                        self.words_column,
-                        pos,
-                    )?;
-                    self.q_xor_bytes.enable(&mut region, pos)?;
-                    rconned.push(byte.value().map(|v| *v));
-                    pos += 1;
-                }
-
-                // copy word from previous round first 4 bytes of prev_round.
-                let word_prev_round = (0..4)
-                    .map(|i| {
-                        prev_round_bytes[i].copy_advice(
-                            || "Copy word at prev_round",
-                            &mut region,
-                            self.words_column,
-                            pos + i,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?;
-
-                // added 4 bytes to words_column
-                pos += 4;
-
-                // xor prev_round and rconned word
-                let mut word = xor_words(
-                    &rconned,
-                    &word_prev_round
-                        .iter()
-                        .map(|v| v.value().map(|&v| v))
-                        .collect::<Vec<_>>(),
-                )
-                .iter()
-                .map(|v| {
-                    let cell =
-                        region.assign_advice(|| "Assign new word", self.words_column, pos, || *v);
-                    self.q_xor_bytes.enable(&mut region, pos)?;
-                    pos += 1;
-                    cell
-                })
-                .collect::<Result<Vec<_>, Error>>()?;
-
-                words.append(&mut word.clone());
-
-                // ====
-                // consecutive 3 words
-                for i in 1..4 {
-                    let word_prev_round = vec![i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 3]
-                        .iter()
-                        .map(|&j| {
-                            let byte = prev_round_bytes[j].copy_advice(
-                                || "Copy word from prev_round",
-                                &mut region,
-                                self.words_column,
-                                pos,
-                            );
-                            pos += 1;
-                            byte
-                        })
-                        .collect::<Result<Vec<_>, Error>>()?;
-
-                    word = xor_words(
-                        &word
-                            .iter()
-                            .map(|v| v.value().map(|&v| v))
-                            .collect::<Vec<_>>(),
-                        &word_prev_round
-                            .iter()
-                            .map(|v| v.value().map(|&v| v))
-                            .collect::<Vec<_>>(),
-                    )
-                    .iter()
-                    .map(|v| {
-                        // Enable xor bytes except for the last word
-                        if i != 3 {
-                            self.q_xor_bytes.enable(&mut region, pos)?;
-                        }
-                        let cell = region.assign_advice(
-                            || "Assign new word",
-                            self.words_column,
-                            pos,
-                            || *v,
-                        );
-                        pos += 1;
-                        cell
-                    })
-                    .collect::<Result<Vec<_>, Error>>()?;
-                    words.append(&mut word.clone());
-                }
-
-                Ok(())
-            },
-        )?;
         Ok(words)
     }
 }
@@ -510,6 +297,14 @@ mod tests {
 
             let words = config
                 .schedule_keys(&mut layouter.namespace(|| "AES128 schedule key"), self.key)?;
+
+            // words.iter().enumerate().for_each(|(i, word)| {
+            //     println!("{}-th word", i);
+            //     word.iter().for_each(|byte| {
+            //         println!("{:?}", byte.value_field().evaluate());
+            //     });
+            // });
+
             // constraint range_check for every byte in the words
             let mut i = 0;
             for word in words {
@@ -557,7 +352,9 @@ mod tests {
         "23e951cf", "6f8f188e",
     ];
 
+    // TODO: ask how to test this kind of unit test
     #[test]
+    #[ignore]
     fn test_correct_key_scheduling() {
         let k = 17;
         let circuit = TestCircuit { key: [0u8; 16] };

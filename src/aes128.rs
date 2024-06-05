@@ -1,4 +1,9 @@
 use crate::{
+    chips::{
+        sbox_chip::{SboxChip, SboxConfig},
+        u8_range_check_chip::{U8RangeCheckChip, U8RangeCheckConfig},
+        u8_xor_chip::{U8XorChip, U8XorConfig},
+    },
     halo2_proofs::{
         circuit::{AssignedCell, Layouter, Region, Value},
         halo2curves::bn256::Fr as Fp,
@@ -9,6 +14,7 @@ use crate::{
     table::{
         gf_mul::{PolyMulBy2TableConfig, PolyMulBy3TableConfig, MUL_BY_2, MUL_BY_3},
         s_box::SboxTableConfig,
+        u8_range_check::U8RangeCheckTableConfig,
         u8_xor::U8XorTableConfig,
     },
     utils::{sub_word, xor_bytes},
@@ -64,9 +70,12 @@ pub struct FixedAes128Config {
     key: Option<[u8; 16]>,
     pub key_schedule_config: Aes128KeyScheduleConfig,
     pub u8_xor_table_config: U8XorTableConfig,
+    pub u8_range_check_table_config: U8RangeCheckTableConfig,
     pub sbox_table_config: SboxTableConfig,
     pub mul2_table_config: PolyMulBy2TableConfig,
     pub mul3_table_config: PolyMulBy3TableConfig,
+
+    advices: [Column<Advice>; 3],
 
     words_column: Column<Advice>,
     q_xor_bytes: Selector,
@@ -78,104 +87,140 @@ pub struct FixedAes128Config {
 
 impl FixedAes128Config {
     pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
-        todo!()
-        // let u8_xor_table_config = U8XorTableConfig::configure(meta);
-        // let sbox_table_config = SboxTableConfig::configure(meta);
+        let u8_xor_table_config = U8XorTableConfig::configure(meta);
+        let sbox_table_config = SboxTableConfig::configure(meta);
+        let u8_range_check_table_config = U8RangeCheckTableConfig::configure(meta);
+        let mul2_table_config = PolyMulBy2TableConfig::configure(meta);
+        let mul3_table_config = PolyMulBy3TableConfig::configure(meta);
 
-        // let key_schedule_config = Aes128KeyScheduleConfig::configure(meta);
+        let advices = [
+            meta.advice_column(),
+            meta.advice_column(),
+            meta.advice_column(),
+        ];
+        let q_u8_range_check = meta.complex_selector();
+        let q_u8_xor = meta.complex_selector();
+        let q_sbox = meta.complex_selector();
 
-        // let u8_xor_table_config = U8XorTableConfig::configure(meta);
-        // let sbox_table_config = SboxTableConfig::configure(meta);
-        // let mul2_table_config = PolyMulBy2TableConfig::configure(meta);
-        // let mul3_table_config = PolyMulBy3TableConfig::configure(meta);
+        let u8_range_check_config = U8RangeCheckChip::configure(
+            meta,
+            advices[0],
+            q_u8_range_check,
+            u8_range_check_table_config,
+        );
+        let u8_xor_config = U8XorChip::configure(
+            meta,
+            advices[0],
+            advices[1],
+            advices[2],
+            q_u8_xor,
+            u8_xor_table_config,
+        );
+        let sbox_config =
+            SboxChip::configure(meta, advices[0], advices[1], q_sbox, sbox_table_config);
 
-        // let words_column = meta.advice_column();
-        // let q_xor_bytes = meta.complex_selector();
-        // let q_xor_adj = meta.complex_selector();
-        // let q_sub_bytes = meta.complex_selector();
-        // let q_mul_by_2 = meta.complex_selector();
-        // let q_mul_by_3 = meta.complex_selector();
+        let key_schedule_config = Aes128KeyScheduleConfig::configure(
+            meta,
+            advices,
+            u8_xor_config,
+            sbox_config,
+            u8_range_check_config,
+        );
 
-        // meta.enable_equality(words_column);
+        let words_column = meta.advice_column();
+        let q_xor_bytes = meta.complex_selector();
+        let q_xor_adj = meta.complex_selector();
+        let q_sub_bytes = meta.complex_selector();
+        let q_mul_by_2 = meta.complex_selector();
+        let q_mul_by_3 = meta.complex_selector();
 
-        // meta.lookup("XOR Bytes", |meta| {
-        //     let q = meta.query_selector(q_xor_bytes);
+        meta.enable_equality(words_column);
+        advices.iter().for_each(|advice| {
+            meta.enable_equality(*advice);
+        });
 
-        //     let x = meta.query_advice(words_column, Rotation::cur());
-        //     let y = meta.query_advice(words_column, Rotation(4));
-        //     let z = meta.query_advice(words_column, Rotation(8));
+        meta.lookup("XOR Bytes", |meta| {
+            let q = meta.query_selector(q_xor_bytes);
 
-        //     vec![
-        //         (q.clone() * x, u8_xor_table_config.x),
-        //         (q.clone() * y, u8_xor_table_config.y),
-        //         (q.clone() * z, u8_xor_table_config.z),
-        //     ]
-        // });
+            let x = meta.query_advice(words_column, Rotation::cur());
+            let y = meta.query_advice(words_column, Rotation(4));
+            let z = meta.query_advice(words_column, Rotation(8));
 
-        // meta.lookup("XOR Adjacent Bytes", |meta| {
-        //     let q = meta.query_selector(q_xor_adj);
+            vec![
+                (q.clone() * x, u8_xor_table_config.x),
+                (q.clone() * y, u8_xor_table_config.y),
+                (q.clone() * z, u8_xor_table_config.z),
+            ]
+        });
 
-        //     let x = meta.query_advice(words_column, Rotation::cur());
-        //     let y = meta.query_advice(words_column, Rotation(1));
-        //     let z = meta.query_advice(words_column, Rotation(2));
+        meta.lookup("XOR Adjacent Bytes", |meta| {
+            let q = meta.query_selector(q_xor_adj);
 
-        //     vec![
-        //         (q.clone() * x, u8_xor_table_config.x),
-        //         (q.clone() * y, u8_xor_table_config.y),
-        //         (q.clone() * z, u8_xor_table_config.z),
-        //     ]
-        // });
+            let x = meta.query_advice(words_column, Rotation::cur());
+            let y = meta.query_advice(words_column, Rotation(1));
+            let z = meta.query_advice(words_column, Rotation(2));
 
-        // // Constraints sub bytes
-        // meta.lookup("Sub Bytes", |meta| {
-        //     let q = meta.query_selector(q_sub_bytes);
-        //     let rot_byte = meta.query_advice(words_column, Rotation::cur());
-        //     let subbed_byte = meta.query_advice(words_column, Rotation(4));
+            vec![
+                (q.clone() * x, u8_xor_table_config.x),
+                (q.clone() * y, u8_xor_table_config.y),
+                (q.clone() * z, u8_xor_table_config.z),
+            ]
+        });
 
-        //     vec![
-        //         (q.clone() * rot_byte, sbox_table_config.x),
-        //         (q.clone() * subbed_byte, sbox_table_config.y),
-        //     ]
-        // });
+        // Constraints sub bytes
+        meta.lookup("Sub Bytes", |meta| {
+            let q = meta.query_selector(q_sub_bytes);
+            let rot_byte = meta.query_advice(words_column, Rotation::cur());
+            let subbed_byte = meta.query_advice(words_column, Rotation(4));
 
-        // // Constraints MUL by 2
-        // meta.lookup("Mul by 2", |meta| {
-        //     let q = meta.query_selector(q_mul_by_2);
-        //     let prev = meta.query_advice(words_column, Rotation::cur());
-        //     let new = meta.query_advice(words_column, Rotation::next());
+            vec![
+                (q.clone() * rot_byte, sbox_table_config.x),
+                (q.clone() * subbed_byte, sbox_table_config.y),
+            ]
+        });
 
-        //     vec![
-        //         (q.clone() * prev, mul2_table_config.x),
-        //         (q.clone() * new, mul2_table_config.y),
-        //     ]
-        // });
+        // Constraints MUL by 2
+        meta.lookup("Mul by 2", |meta| {
+            let q = meta.query_selector(q_mul_by_2);
+            let prev = meta.query_advice(words_column, Rotation::cur());
+            let new = meta.query_advice(words_column, Rotation::next());
 
-        // // Constraints MUL by 3
-        // meta.lookup("Mul by 3", |meta| {
-        //     let q = meta.query_selector(q_mul_by_3);
-        //     let prev = meta.query_advice(words_column, Rotation::cur());
-        //     let new = meta.query_advice(words_column, Rotation::next());
+            vec![
+                (q.clone() * prev, mul2_table_config.x),
+                (q.clone() * new, mul2_table_config.y),
+            ]
+        });
 
-        //     vec![
-        //         (q.clone() * prev, mul3_table_config.x),
-        //         (q.clone() * new, mul3_table_config.y),
-        //     ]
-        // });
+        // Constraints MUL by 3
+        meta.lookup("Mul by 3", |meta| {
+            let q = meta.query_selector(q_mul_by_3);
+            let prev = meta.query_advice(words_column, Rotation::cur());
+            let new = meta.query_advice(words_column, Rotation::next());
 
-        // Self {
-        //     key: None,
-        //     key_schedule_config,
-        //     u8_xor_table_config,
-        //     sbox_table_config,
-        //     mul2_table_config,
-        //     mul3_table_config,
-        //     words_column,
-        //     q_xor_bytes,
-        //     q_xor_adj,
-        //     q_sub_bytes,
-        //     q_mul_by_2,
-        //     q_mul_by_3,
-        // }
+            vec![
+                (q.clone() * prev, mul3_table_config.x),
+                (q.clone() * new, mul3_table_config.y),
+            ]
+        });
+
+        Self {
+            key: None,
+            key_schedule_config,
+            u8_xor_table_config,
+            u8_range_check_table_config,
+            sbox_table_config,
+            mul2_table_config,
+            mul3_table_config,
+            advices,
+
+            words_column,
+
+            q_xor_bytes,
+            q_mul_by_2,
+            q_mul_by_3,
+            q_sub_bytes,
+            q_xor_adj,
+        }
     }
 
     pub fn encrypt(
@@ -592,8 +637,7 @@ mod tests {
         ) -> Result<(), Error> {
             config.u8_xor_table_config.load(&mut layouter)?;
             config.sbox_table_config.load(&mut layouter)?;
-            // config.key_schedule_config.load(&mut layouter);
-
+            config.u8_range_check_table_config.load(&mut layouter)?;
             config.mul2_table_config.load(&mut layouter)?;
             config.mul3_table_config.load(&mut layouter)?;
 

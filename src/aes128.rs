@@ -17,7 +17,6 @@ use crate::{
         u8_range_check::U8RangeCheckTableConfig,
         u8_xor::U8XorTableConfig,
     },
-    utils::xor_bytes,
 };
 
 #[derive(Clone, Debug)]
@@ -37,9 +36,6 @@ pub struct FixedAes128Config {
     advices: [Column<Advice>; 3],
 
     words_column: Column<Advice>,
-    q_xor_bytes: Selector,
-    q_xor_adj: Selector,
-    q_sub_bytes: Selector,
     q_mul_by_2: Selector,
     q_mul_by_3: Selector,
 }
@@ -87,55 +83,12 @@ impl FixedAes128Config {
         );
 
         let words_column = meta.advice_column();
-        let q_xor_bytes = meta.complex_selector();
-        let q_xor_adj = meta.complex_selector();
-        let q_sub_bytes = meta.complex_selector();
         let q_mul_by_2 = meta.complex_selector();
         let q_mul_by_3 = meta.complex_selector();
 
         meta.enable_equality(words_column);
         advices.iter().for_each(|advice| {
             meta.enable_equality(*advice);
-        });
-
-        meta.lookup("XOR Bytes", |meta| {
-            let q = meta.query_selector(q_xor_bytes);
-
-            let x = meta.query_advice(words_column, Rotation::cur());
-            let y = meta.query_advice(words_column, Rotation(4));
-            let z = meta.query_advice(words_column, Rotation(8));
-
-            vec![
-                (q.clone() * x, u8_xor_table_config.x),
-                (q.clone() * y, u8_xor_table_config.y),
-                (q.clone() * z, u8_xor_table_config.z),
-            ]
-        });
-
-        meta.lookup("XOR Adjacent Bytes", |meta| {
-            let q = meta.query_selector(q_xor_adj);
-
-            let x = meta.query_advice(words_column, Rotation::cur());
-            let y = meta.query_advice(words_column, Rotation(1));
-            let z = meta.query_advice(words_column, Rotation(2));
-
-            vec![
-                (q.clone() * x, u8_xor_table_config.x),
-                (q.clone() * y, u8_xor_table_config.y),
-                (q.clone() * z, u8_xor_table_config.z),
-            ]
-        });
-
-        // Constraints sub bytes
-        meta.lookup("Sub Bytes", |meta| {
-            let q = meta.query_selector(q_sub_bytes);
-            let rot_byte = meta.query_advice(words_column, Rotation::cur());
-            let subbed_byte = meta.query_advice(words_column, Rotation(4));
-
-            vec![
-                (q.clone() * rot_byte, sbox_table_config.x),
-                (q.clone() * subbed_byte, sbox_table_config.y),
-            ]
         });
 
         // Constraints MUL by 2
@@ -178,11 +131,8 @@ impl FixedAes128Config {
 
             words_column,
 
-            q_xor_bytes,
             q_mul_by_2,
             q_mul_by_3,
-            q_sub_bytes,
-            q_xor_adj,
         }
     }
 
@@ -226,11 +176,6 @@ impl FixedAes128Config {
             .map(|(p, k)| xor_chip.xor(&mut layouter, p, &k))
             .collect::<Result<Vec<_>, Error>>()?;
 
-        // println!("Round0");
-        // round_out.iter().for_each(|cell| {
-        //     println!(" {:?}", cell.value());
-        // });
-
         // we have 4 words in round_out vec.
         for no_round in 1..11 {
             // Sub round_out
@@ -256,10 +201,6 @@ impl FixedAes128Config {
                 shifted.push(inner);
             }
 
-            // subbed
-            //     .iter()
-            //     .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
-
             // Mixcolumns
             // do linear transformation to the columns.
             // for each column(word) multiply by matrix
@@ -284,11 +225,6 @@ impl FixedAes128Config {
                     })
                     .collect::<Result<Vec<Vec<_>>, Error>>()?
             };
-
-            // println!("After mixed");
-            // mixed
-            //     .iter()
-            //     .for_each(|cell| cell.iter().for_each(|v| println!("  {:?}", v.value())));
 
             prev_round = mixed
                 .iter()
@@ -324,14 +260,14 @@ impl FixedAes128Config {
         word: &Vec<AssignedCell<Fp, Fp>>,
         coeffs: &Vec<u32>,
     ) -> Result<AssignedCell<Fp, Fp>, Error> {
-        layouter.assign_region(
-            || "",
-            |mut region| {
-                let offset = 0;
-                let mut internal_offset = 0;
+        let xor_chip = U8XorChip::construct(self.u8_xor_config);
 
-                let tmp = word
-                    .iter()
+        let tmp = layouter.assign_region(
+            || "Mul with coeffs",
+            |mut region| {
+                let mut offset = 0;
+
+                word.iter()
                     .zip(coeffs)
                     .map(|(byte, col)| match col {
                         1 => {
@@ -340,9 +276,9 @@ impl FixedAes128Config {
                                 || "Copy mul by 1",
                                 &mut region,
                                 self.words_column,
-                                offset + internal_offset,
+                                offset,
                             );
-                            internal_offset += 1;
+                            offset += 1;
                             res
                         }
                         2 => {
@@ -350,23 +286,22 @@ impl FixedAes128Config {
                             let new_byte = byte.value().map(|v| {
                                 Fp::from(MUL_BY_2[*v.to_bytes().first().unwrap() as usize] as u64)
                             });
-                            self.q_mul_by_2
-                                .enable(&mut region, offset + internal_offset)?;
+                            self.q_mul_by_2.enable(&mut region, offset)?;
                             byte.copy_advice(
                                 || "Copy prev_byte",
                                 &mut region,
                                 self.words_column,
-                                offset + internal_offset,
+                                offset,
                             )?;
-                            internal_offset += 1;
+                            offset += 1;
 
                             let res = region.assign_advice(
                                 || "Assign mul by 2",
                                 self.words_column,
-                                offset + internal_offset,
+                                offset,
                                 || new_byte,
                             );
-                            internal_offset += 1;
+                            offset += 1;
                             res
                         }
                         3 => {
@@ -375,106 +310,33 @@ impl FixedAes128Config {
                             let new_byte = byte.value().map(|v| {
                                 Fp::from(MUL_BY_3[*v.to_bytes().first().unwrap() as usize] as u64)
                             });
-                            self.q_mul_by_3
-                                .enable(&mut region, offset + internal_offset)?;
+                            self.q_mul_by_3.enable(&mut region, offset)?;
                             byte.copy_advice(
                                 || "Copy prev_byte",
                                 &mut region,
                                 self.words_column,
-                                offset + internal_offset,
+                                offset,
                             )?;
-                            internal_offset += 1;
+                            offset += 1;
 
                             let res = region.assign_advice(
                                 || "Assign mul by 3",
                                 self.words_column,
-                                offset + internal_offset,
+                                offset,
                                 || new_byte,
                             );
-                            internal_offset += 1;
+                            offset += 1;
                             res
                         }
                         _ => panic!("col should be 1, 2, or 3."),
                     })
-                    .collect::<Result<Vec<_>, Error>>()?;
-
-                // we have 4 bytes in tmp now
-                // xor first two
-                self.q_xor_adj
-                    .enable(&mut region, offset + internal_offset)?;
-                tmp[0].copy_advice(
-                    || "Copy mul[0]",
-                    &mut region,
-                    self.words_column,
-                    offset + internal_offset,
-                )?;
-                internal_offset += 1;
-                tmp[1].copy_advice(
-                    || "Copy mul[1]",
-                    &mut region,
-                    self.words_column,
-                    offset + internal_offset,
-                )?;
-                internal_offset += 1;
-
-                let intermediate_0 = region.assign_advice(
-                    || "Assign MixColumns intermediate value",
-                    self.words_column,
-                    offset + internal_offset,
-                    || xor_bytes(&tmp[0].value().map(|v| *v), &tmp[1].value().map(|v| *v)),
-                )?;
-                internal_offset += 1;
-
-                self.q_xor_adj
-                    .enable(&mut region, offset + internal_offset)?;
-                tmp[2].copy_advice(
-                    || "Copy mul[2]",
-                    &mut region,
-                    self.words_column,
-                    offset + internal_offset,
-                )?;
-                internal_offset += 1;
-                tmp[3].copy_advice(
-                    || "Copy mul[3]",
-                    &mut region,
-                    self.words_column,
-                    offset + internal_offset,
-                )?;
-                internal_offset += 1;
-
-                // enable xor_adj for the last.
-                self.q_xor_adj
-                    .enable(&mut region, offset + internal_offset)?;
-                let intermediate_1 = region.assign_advice(
-                    || "Assign MixColumns intermediate value",
-                    self.words_column,
-                    offset + internal_offset,
-                    || xor_bytes(&tmp[2].value().map(|v| *v), &tmp[3].value().map(|v| *v)),
-                )?;
-                internal_offset += 1;
-
-                intermediate_0.copy_advice(
-                    || "Copy intermediate_0",
-                    &mut region,
-                    self.words_column,
-                    offset + internal_offset,
-                )?;
-                internal_offset += 1;
-
-                let res = region.assign_advice(
-                    || "Assign MixColumns new value",
-                    self.words_column,
-                    offset + internal_offset,
-                    || {
-                        xor_bytes(
-                            &intermediate_0.value().map(|v| *v),
-                            &intermediate_1.value().map(|v| *v),
-                        )
-                    },
-                )?;
-                Ok(res)
+                    .collect::<Result<Vec<_>, Error>>()
             },
-        )
+        )?;
+
+        let inter_1 = xor_chip.xor(layouter, &tmp[0], &tmp[1])?;
+        let inter_2 = xor_chip.xor(layouter, &tmp[2], &tmp[3])?;
+        xor_chip.xor(layouter, &inter_1, &inter_2)
     }
 }
 

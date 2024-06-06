@@ -42,8 +42,7 @@ impl Circuit<Fp> for Aes128BenchCircuit {
     ) -> Result<(), Error> {
         config.u8_xor_table_config.load(&mut layouter)?;
         config.sbox_table_config.load(&mut layouter)?;
-        config.key_schedule_config.load(&mut layouter);
-
+        config.u8_range_check_table_config.load(&mut layouter)?;
         config.mul2_table_config.load(&mut layouter)?;
         config.mul3_table_config.load(&mut layouter)?;
 

@@ -1,8 +1,8 @@
 pub mod aes128;
 pub mod chips;
 pub mod key_schedule;
-mod table;
-mod utils;
+pub mod table;
+pub mod utils;
 
 pub use aes128::FixedAes128Config;
 

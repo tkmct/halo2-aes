@@ -27,7 +27,7 @@ pub struct SboxTableConfig {
 }
 
 impl SboxTableConfig {
-    pub(crate) fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
+    pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
         Self {
             x: meta.lookup_table_column(),
             y: meta.lookup_table_column(),

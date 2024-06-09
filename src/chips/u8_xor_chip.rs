@@ -65,6 +65,7 @@ impl U8XorChip {
         layouter.assign_region(
             || "assign values for u8 xor check",
             |mut region| {
+                self.config.q.enable(&mut region, 0)?;
                 let x_copied = x.copy_advice(
                     || "assign x value to check u8 xor",
                     &mut region,

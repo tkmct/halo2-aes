@@ -1,5 +1,6 @@
 use crate::{
     chips::{
+        gf_mul_chip::{MulBy2Chip, MulBy2Config, MulBy3Chip, MulBy3Config},
         sbox_chip::{SboxChip, SboxConfig},
         u8_range_check_chip::{U8RangeCheckChip, U8RangeCheckConfig},
         u8_xor_chip::{U8XorChip, U8XorConfig},
@@ -7,12 +8,11 @@ use crate::{
     halo2_proofs::{
         circuit::{AssignedCell, Layouter, Value},
         halo2curves::bn256::Fr as Fp,
-        plonk::{Advice, Column, ConstraintSystem, Error, Selector},
-        poly::Rotation,
+        plonk::{Advice, Column, ConstraintSystem, Error},
     },
     key_schedule::Aes128KeyScheduleConfig,
     table::{
-        gf_mul::{PolyMulBy2TableConfig, PolyMulBy3TableConfig, MUL_BY_2, MUL_BY_3},
+        gf_mul::{PolyMulBy2TableConfig, PolyMulBy3TableConfig},
         s_box::SboxTableConfig,
         u8_range_check::U8RangeCheckTableConfig,
         u8_xor::U8XorTableConfig,
@@ -32,12 +32,10 @@ pub struct FixedAes128Config {
     u8_range_check_config: U8RangeCheckConfig,
     u8_xor_config: U8XorConfig,
     sbox_config: SboxConfig,
+    mul2_config: MulBy2Config,
+    mul3_config: MulBy3Config,
 
     advices: [Column<Advice>; 3],
-
-    words_column: Column<Advice>,
-    q_mul_by_2: Selector,
-    q_mul_by_3: Selector,
 }
 
 impl FixedAes128Config {
@@ -56,6 +54,8 @@ impl FixedAes128Config {
         let q_u8_range_check = meta.complex_selector();
         let q_u8_xor = meta.complex_selector();
         let q_sbox = meta.complex_selector();
+        let q_mul_by_2 = meta.complex_selector();
+        let q_mul_by_3 = meta.complex_selector();
 
         let u8_range_check_config = U8RangeCheckChip::configure(
             meta,
@@ -73,6 +73,10 @@ impl FixedAes128Config {
         );
         let sbox_config =
             SboxChip::configure(meta, advices[0], advices[1], q_sbox, sbox_table_config);
+        let mul2_config =
+            MulBy2Chip::configure(meta, advices[0], advices[1], q_mul_by_2, mul2_table_config);
+        let mul3_config =
+            MulBy3Chip::configure(meta, advices[0], advices[1], q_mul_by_3, mul3_table_config);
 
         let key_schedule_config = Aes128KeyScheduleConfig::configure(
             meta,
@@ -82,37 +86,8 @@ impl FixedAes128Config {
             u8_range_check_config,
         );
 
-        let words_column = meta.advice_column();
-        let q_mul_by_2 = meta.complex_selector();
-        let q_mul_by_3 = meta.complex_selector();
-
-        meta.enable_equality(words_column);
         advices.iter().for_each(|advice| {
             meta.enable_equality(*advice);
-        });
-
-        // Constraints MUL by 2
-        meta.lookup("Mul by 2", |meta| {
-            let q = meta.query_selector(q_mul_by_2);
-            let prev = meta.query_advice(words_column, Rotation::cur());
-            let new = meta.query_advice(words_column, Rotation::next());
-
-            vec![
-                (q.clone() * prev, mul2_table_config.x),
-                (q.clone() * new, mul2_table_config.y),
-            ]
-        });
-
-        // Constraints MUL by 3
-        meta.lookup("Mul by 3", |meta| {
-            let q = meta.query_selector(q_mul_by_3);
-            let prev = meta.query_advice(words_column, Rotation::cur());
-            let new = meta.query_advice(words_column, Rotation::next());
-
-            vec![
-                (q.clone() * prev, mul3_table_config.x),
-                (q.clone() * new, mul3_table_config.y),
-            ]
         });
 
         Self {
@@ -128,11 +103,8 @@ impl FixedAes128Config {
             u8_range_check_config,
             u8_xor_config,
             sbox_config,
-
-            words_column,
-
-            q_mul_by_2,
-            q_mul_by_3,
+            mul2_config,
+            mul3_config,
         }
     }
 
@@ -161,7 +133,7 @@ impl FixedAes128Config {
                     .map(|(i, &p)| {
                         region.assign_advice(
                             || "Assign plaintext",
-                            self.words_column,
+                            self.advices[0],
                             i,
                             || Value::known(Fp::from(p as u64)),
                         )
@@ -261,78 +233,27 @@ impl FixedAes128Config {
         coeffs: &Vec<u32>,
     ) -> Result<AssignedCell<Fp, Fp>, Error> {
         let xor_chip = U8XorChip::construct(self.u8_xor_config);
+        let mul2_chip = MulBy2Chip::construct(self.mul2_config);
+        let mul3_chip = MulBy3Chip::construct(self.mul3_config);
 
-        let tmp = layouter.assign_region(
-            || "Mul with coeffs",
-            |mut region| {
-                let mut offset = 0;
-
-                word.iter()
-                    .zip(coeffs)
-                    .map(|(byte, col)| match col {
-                        1 => {
+        let tmp = word
+            .iter()
+            .zip(coeffs)
+            .map(|(byte, col)| match col {
+                1 => {
+                    layouter.assign_region(
+                        || "Mul with coeffs",
+                        |mut region| {
                             // just copy advice from word
-                            let res = byte.copy_advice(
-                                || "Copy mul by 1",
-                                &mut region,
-                                self.words_column,
-                                offset,
-                            );
-                            offset += 1;
-                            res
-                        }
-                        2 => {
-                            // TODO: extract method to map values using table
-                            let new_byte = byte.value().map(|v| {
-                                Fp::from(MUL_BY_2[*v.to_bytes().first().unwrap() as usize] as u64)
-                            });
-                            self.q_mul_by_2.enable(&mut region, offset)?;
-                            byte.copy_advice(
-                                || "Copy prev_byte",
-                                &mut region,
-                                self.words_column,
-                                offset,
-                            )?;
-                            offset += 1;
-
-                            let res = region.assign_advice(
-                                || "Assign mul by 2",
-                                self.words_column,
-                                offset,
-                                || new_byte,
-                            );
-                            offset += 1;
-                            res
-                        }
-                        3 => {
-                            // TODO: extract method to map values using table
-
-                            let new_byte = byte.value().map(|v| {
-                                Fp::from(MUL_BY_3[*v.to_bytes().first().unwrap() as usize] as u64)
-                            });
-                            self.q_mul_by_3.enable(&mut region, offset)?;
-                            byte.copy_advice(
-                                || "Copy prev_byte",
-                                &mut region,
-                                self.words_column,
-                                offset,
-                            )?;
-                            offset += 1;
-
-                            let res = region.assign_advice(
-                                || "Assign mul by 3",
-                                self.words_column,
-                                offset,
-                                || new_byte,
-                            );
-                            offset += 1;
-                            res
-                        }
-                        _ => panic!("col should be 1, 2, or 3."),
-                    })
-                    .collect::<Result<Vec<_>, Error>>()
-            },
-        )?;
+                            byte.copy_advice(|| "Copy mul by 1", &mut region, self.advices[0], 0)
+                        },
+                    )
+                }
+                2 => mul2_chip.mul(layouter, byte),
+                3 => mul3_chip.mul(layouter, byte),
+                _ => panic!("col should be 1, 2, or 3."),
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
 
         let inter_1 = xor_chip.xor(layouter, &tmp[0], &tmp[1])?;
         let inter_2 = xor_chip.xor(layouter, &tmp[2], &tmp[3])?;

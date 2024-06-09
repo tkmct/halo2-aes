@@ -56,6 +56,7 @@ impl SboxChip {
         layouter.assign_region(
             || "assign values for Sbox substitution",
             |mut region| {
+                self.config.q.enable(&mut region, 0)?;
                 let x_copied = x.copy_advice(
                     || "assign x value for sbox_sub",
                     &mut region,

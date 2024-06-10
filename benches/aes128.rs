@@ -8,15 +8,19 @@ use halo2_aes::{
             create_proof, keygen_pk, keygen_vk, Circuit, ConstraintSystem, Error, ProvingKey,
             VerifyingKey,
         },
-        poly::kzg::{
-            commitment::{KZGCommitmentScheme, ParamsKZG},
-            multiopen::ProverSHPLONK,
+        poly::{
+            commitment::Params,
+            kzg::{
+                commitment::{KZGCommitmentScheme, ParamsKZG},
+                multiopen::ProverSHPLONK,
+            },
         },
         transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer},
     },
     FixedAes128Config,
 };
 use rand::rngs::OsRng;
+use std::fs::File;
 
 const SAMPLE_SIZE: usize = 10;
 
@@ -68,7 +72,16 @@ fn setup_params<C: Circuit<Fp>>(
     VerifyingKey<G1Affine>,
 ) {
     // TODO: load kzg params if available
-    let params = ParamsKZG::<Bn256>::setup(k, OsRng);
+
+    let path = format!("ptau/kzg_bn254_{}.srs", k);
+    let params = if let Ok(mut fs) = File::open(path) {
+        ParamsKZG::<Bn256>::read(&mut fs).expect("Failed to read params")
+    } else {
+        // panic!("Not loaded");
+        ParamsKZG::<Bn256>::setup(k, OsRng)
+    };
+    println!("Parameter files loaded");
+
     let vk = keygen_vk(&params, &circuit).expect("vk generation should not fail");
     let pk = keygen_pk(&params, vk.clone(), &circuit).expect("pk generation should not fail");
     (params, pk, vk)
@@ -81,7 +94,7 @@ fn prove_aes128_circuit(c: &mut Criterion) {
         plaintext: [0u8; 16],
         encrypt_num: 1,
     };
-    let (params, pk, _) = setup_params(20, circuit.clone());
+    let (params, pk, _) = setup_params(19, circuit.clone());
     let mut group = c.benchmark_group("prove AES128 encryption");
     group.sample_size(SAMPLE_SIZE);
 

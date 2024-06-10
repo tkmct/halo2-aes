@@ -106,7 +106,7 @@ pub const MUL_BY_14: [u8; 256] = [
 
 macro_rules! define_mul_table_config {
     ($name:ident, $table:ident) => {
-        #[derive(Clone, Debug)]
+        #[derive(Clone, Copy, Debug)]
         pub struct $name {
             pub x: TableColumn,
             pub y: TableColumn,

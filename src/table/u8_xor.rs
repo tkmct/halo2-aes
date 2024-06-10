@@ -4,20 +4,24 @@ use crate::halo2_proofs::{
     plonk::{ConstraintSystem, Error, TableColumn},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct U8XorTableConfig {
-    pub(crate) x: TableColumn,
-    pub(crate) y: TableColumn,
-    pub(crate) z: TableColumn,
+    pub x: TableColumn,
+    pub y: TableColumn,
+    pub z: TableColumn,
 }
 
 impl U8XorTableConfig {
-    pub(crate) fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
-        Self {
-            x: meta.lookup_table_column(),
-            y: meta.lookup_table_column(),
-            z: meta.lookup_table_column(),
-        }
+    pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
+        let x = meta.lookup_table_column();
+        let y = meta.lookup_table_column();
+        let z = meta.lookup_table_column();
+
+        meta.annotate_lookup_column(x, || "LOOKUP_U8_XOR_X");
+        meta.annotate_lookup_column(y, || "LOOKUP_U8_XOR_Y");
+        meta.annotate_lookup_column(z, || "LOOKUP_U8_XOR_Z");
+
+        Self { x, y, z }
     }
 
     pub fn load(&self, layouter: &mut impl Layouter<Fp>) -> Result<(), Error> {

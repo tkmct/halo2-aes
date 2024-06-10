@@ -20,14 +20,14 @@ pub const S_BOX: [u8; 256] = [
     153, 45, 15, 176, 84, 187, 23,
 ];
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct SboxTableConfig {
     pub(crate) x: TableColumn,
     pub(crate) y: TableColumn,
 }
 
 impl SboxTableConfig {
-    pub(crate) fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
+    pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
         Self {
             x: meta.lookup_table_column(),
             y: meta.lookup_table_column(),

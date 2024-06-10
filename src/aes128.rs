@@ -21,7 +21,8 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct FixedAes128Config {
-    key: Option<[u8; 16]>,
+    keys: Option<Vec<Vec<AssignedCell<Fp, Fp>>>>,
+
     pub key_schedule_config: Aes128KeyScheduleConfig,
     pub u8_xor_table_config: U8XorTableConfig,
     pub u8_range_check_table_config: U8RangeCheckTableConfig,
@@ -91,7 +92,7 @@ impl FixedAes128Config {
         });
 
         Self {
-            key: None,
+            keys: None,
             key_schedule_config,
             u8_xor_table_config,
             u8_range_check_table_config,
@@ -108,9 +109,20 @@ impl FixedAes128Config {
         }
     }
 
+    pub fn schedule_key(
+        &mut self,
+        layouter: &mut impl Layouter<Fp>,
+        key: [u8; 16],
+    ) -> Result<(), Error> {
+        let round_keys = self.key_schedule_config.schedule_keys(layouter, key)?;
+        self.keys = Some(round_keys);
+
+        Ok(())
+    }
+
     pub fn encrypt(
         &mut self,
-        mut layouter: impl Layouter<Fp>,
+        layouter: &mut impl Layouter<Fp>,
         plaintext: [u8; 16],
     ) -> Result<Vec<AssignedCell<Fp, Fp>>, Error> {
         // Prepare chips
@@ -118,9 +130,7 @@ impl FixedAes128Config {
         let sbox_chip = SboxChip::construct(self.sbox_config);
         let range_chip = U8RangeCheckChip::construct(self.u8_range_check_config);
 
-        let round_keys = self
-            .key_schedule_config
-            .schedule_keys(&mut layouter, self.key.expect("Key should be set"))?;
+        let round_keys = self.keys.clone().expect("Keys should be scheduled");
 
         // TODO: decide if open the plaintext as instance
         // Assign 16 bytes in cells
@@ -145,7 +155,7 @@ impl FixedAes128Config {
         let mut prev_round = assigned_plaintext
             .iter()
             .zip(round_keys[0].clone())
-            .map(|(p, k)| xor_chip.xor(&mut layouter, p, &k))
+            .map(|(p, k)| xor_chip.xor(layouter, p, &k))
             .collect::<Result<Vec<_>, Error>>()?;
 
         // we have 4 words in round_out vec.
@@ -153,7 +163,7 @@ impl FixedAes128Config {
             // Sub round_out
             let subbed = prev_round
                 .iter()
-                .map(|byte| sbox_chip.substitute(&mut layouter, byte))
+                .map(|byte| sbox_chip.substitute(layouter, byte))
                 .collect::<Result<Vec<_>, Error>>()?
                 .chunks(4)
                 .map(|word| word.to_vec())
@@ -192,7 +202,7 @@ impl FixedAes128Config {
                     .map(|word| {
                         matrix
                             .iter()
-                            .map(|col| self.lcon(&mut layouter, word, col))
+                            .map(|col| self.lcon(layouter, word, col))
                             .collect::<Result<Vec<_>, Error>>()
                     })
                     .collect::<Result<Vec<Vec<_>>, Error>>()?
@@ -203,9 +213,7 @@ impl FixedAes128Config {
                 .enumerate()
                 .map(|(i, word)| {
                     (0..4)
-                        .map(|j| {
-                            xor_chip.xor(&mut layouter, &word[j], &round_keys[no_round][i * 4 + j])
-                        })
+                        .map(|j| xor_chip.xor(layouter, &word[j], &round_keys[no_round][i * 4 + j]))
                         .collect::<Result<Vec<_>, Error>>()
                 })
                 .collect::<Result<Vec<Vec<_>>, Error>>()?
@@ -219,10 +227,6 @@ impl FixedAes128Config {
 
     pub fn decrypt(&self, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
         todo!()
-    }
-
-    pub fn set_key(&mut self, key: [u8; 16]) {
-        self.key = Some(key);
     }
 
     // Compute linear combination of word and given coefficients
@@ -242,7 +246,7 @@ impl FixedAes128Config {
             .map(|(byte, col)| match col {
                 1 => {
                     layouter.assign_region(
-                        || "Mul with coeffs",
+                        || "",
                         |mut region| {
                             // just copy advice from word
                             byte.copy_advice(|| "Copy mul by 1", &mut region, self.advices[0], 0)
@@ -297,9 +301,11 @@ mod tests {
             config.mul2_table_config.load(&mut layouter)?;
             config.mul3_table_config.load(&mut layouter)?;
 
-            config.set_key(self.key);
-
-            let val = config.encrypt(layouter, self.plaintext)?;
+            config.schedule_key(&mut layouter, self.key)?;
+            // for i in 0..769 {
+            // config.encrypt(&mut layouter, self.plaintext)?;
+            // }
+            let val = config.encrypt(&mut layouter, self.plaintext)?;
             val.iter().for_each(|cell| {
                 println!(" {:?}", cell.value());
             });
@@ -315,7 +321,7 @@ mod tests {
     #[test]
     #[cfg(feature = "halo2-pse")]
     fn test_correct_encryption() {
-        let k = 18;
+        let k = 20;
         let circuit = TestAesCircuit {
             key: [0u8; 16],
             plaintext: [0u8; 16],
@@ -346,7 +352,7 @@ mod tests {
     fn print_aes_encrypt() {
         use plotters::prelude::*;
 
-        let k = 18;
+        let k = 20;
         let circuit = TestAesCircuit {
             key: [0u8; 16],
             plaintext: [0u8; 16],
@@ -369,7 +375,7 @@ mod tests {
     fn cost_estimate_aes_encrypt() {
         use halo2_proofs::dev::cost_model::{from_circuit_to_model_circuit, CommitmentScheme};
 
-        let k = 18;
+        let k = 20;
         let circuit = TestAesCircuit {
             key: [0u8; 16],
             plaintext: [0u8; 16],

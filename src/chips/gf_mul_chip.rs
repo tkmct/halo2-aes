@@ -55,7 +55,7 @@ macro_rules! define_mul_chip {
                 x: &AssignedCell<Fp, Fp>,
             ) -> Result<AssignedCell<Fp, Fp>, Error> {
                 layouter.assign_region(
-                    || "assign values for gf mul by $n",
+                    || "",
                     |mut region| {
                         self.config.q.enable(&mut region, 0)?;
                         x.copy_advice(

@@ -50,7 +50,7 @@ impl U8RangeCheckChip {
         x: &AssignedCell<Fp, Fp>,
     ) -> Result<(), Error> {
         layouter.assign_region(
-            || "Enable selector for checked value",
+            || "",
             |mut region| {
                 // TODO: get offset from this region to x's region and calculate the relative offset from this region
                 //    let offset = get_region_offset(

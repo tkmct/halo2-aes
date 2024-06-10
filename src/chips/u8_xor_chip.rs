@@ -63,7 +63,7 @@ impl U8XorChip {
         y: &AssignedCell<Fp, Fp>,
     ) -> Result<AssignedCell<Fp, Fp>, Error> {
         layouter.assign_region(
-            || "assign values for u8 xor check",
+            || "",
             |mut region| {
                 self.config.q.enable(&mut region, 0)?;
                 let x_copied = x.copy_advice(

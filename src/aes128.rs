@@ -108,7 +108,7 @@ impl FixedAes128Config {
         // Prepare chips
         let xor_chip = U8XorChip::construct(self.u8_xor_config);
         let sbox_chip = SboxChip::construct(self.sbox_config);
-        let range_chip = U8RangeCheckChip::construct(self.u8_range_check_config);
+        let _range_chip = U8RangeCheckChip::construct(self.u8_range_check_config);
 
         let round_keys = self.keys.clone().expect("Keys should be scheduled");
 
@@ -205,9 +205,9 @@ impl FixedAes128Config {
         Ok(prev_round)
     }
 
-    pub fn decrypt(&self, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
-        todo!()
-    }
+    // pub fn decrypt(&self, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
+    //     todo!()
+    // }
 
     // Compute linear combination of word and given coefficients
     fn lcon(

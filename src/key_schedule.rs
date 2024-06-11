@@ -28,7 +28,7 @@ pub struct Aes128KeyScheduleConfig {
     round_constants: Column<Fixed>,
 
     q_eq_rcon: Selector,
-    advices: [Column<Advice>; 3],
+    _advices: [Column<Advice>; 3],
 
     u8_range_check_config: U8RangeCheckConfig,
     u8_xor_config: U8XorConfig,
@@ -69,7 +69,7 @@ impl Aes128KeyScheduleConfig {
 
             q_eq_rcon,
 
-            advices,
+            _advices: advices,
             u8_range_check_config,
             u8_xor_config,
             sbox_config,
@@ -299,7 +299,8 @@ mod tests {
             mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
             load_enc_full_table(&mut layouter, config.1)?;
-            let words = config
+            // let words =
+            config
                 .0
                 .schedule_keys(&mut layouter.namespace(|| "AES128 schedule key"), self.key)?;
 

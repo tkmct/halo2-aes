@@ -47,7 +47,7 @@ impl Circuit<Fp> for Aes128BenchCircuit {
     ) -> Result<(), Error> {
         load_enc_full_table(&mut layouter, config.tables)?;
         config.schedule_key(&mut layouter, self.key)?;
-        for i in 0..self.encrypt_num {
+        for _ in 0..self.encrypt_num {
             config.encrypt(&mut layouter, self.plaintext)?;
         }
 

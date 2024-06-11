@@ -17,24 +17,10 @@ pub(crate) fn xor_bytes(x: &Value<Fp>, y: &Value<Fp>) -> Value<Fp> {
         })
         .map(|bytes| Fp::from_bytes(&bytes.try_into().unwrap()).unwrap())
 }
-/// Calculate XOR of given two words.
-pub(crate) fn xor_words(x: &Vec<Value<Fp>>, y: &Vec<Value<Fp>>) -> Vec<Value<Fp>> {
-    x.iter()
-        .zip(y)
-        .map(|(x, y)| xor_bytes(x, y))
-        .collect::<Vec<_>>()
-}
 
 /// Substitute single byte using s-box
 pub(crate) fn sub_byte(x: &Value<Fp>) -> Value<Fp> {
     x.map(|v| Fp::from(S_BOX[*v.to_bytes().first().unwrap() as usize] as u64))
-}
-
-/// Substitute each byte in a word using s-box
-pub(crate) fn sub_word(x: &Vec<Value<Fp>>) -> Vec<Value<Fp>> {
-    assert!(x.len() == 4);
-    let word = x.iter().map(sub_byte).collect::<Vec<_>>();
-    word
 }
 
 /// See here for the detailed explanation of the constant.

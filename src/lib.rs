@@ -1,5 +1,6 @@
 pub mod aes128;
 pub mod chips;
+pub mod constant;
 pub mod key_schedule;
 pub mod table;
 pub mod utils;

@@ -2,10 +2,10 @@ use crate::{
     halo2_proofs::{
         circuit::{AssignedCell, Layouter},
         halo2curves::bn256::Fr as Fp,
-        plonk::{Advice, Column, ConstraintSystem, Error, Selector},
+        plonk::{Advice, Column, ConstraintSystem, Error, Selector, TableColumn},
         poly::Rotation,
     },
-    table::u8_range_check::U8RangeCheckTableConfig,
+    table::Tag,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -29,13 +29,17 @@ impl U8RangeCheckChip {
         meta: &mut ConstraintSystem<Fp>,
         x_col: Column<Advice>,
         selector: Selector,
-        table_config: U8RangeCheckTableConfig,
+        tag_tab: TableColumn,
+        value_tab: TableColumn,
     ) -> U8RangeCheckConfig {
         meta.lookup("Range check u8 value", |meta| {
             let q = meta.query_selector(selector);
             let x = meta.query_advice(x_col, Rotation::cur());
 
-            vec![(q.clone() * x, table_config.value)]
+            vec![
+                (q.clone() * Fp::from(Tag::U8 as u64), tag_tab),
+                (q * x, value_tab),
+            ]
         });
 
         U8RangeCheckConfig {
@@ -52,15 +56,6 @@ impl U8RangeCheckChip {
         layouter.assign_region(
             || "",
             |mut region| {
-                // TODO: get offset from this region to x's region and calculate the relative offset from this region
-                //    let offset = get_region_offset(
-                //     layouter
-                //     x.cell().region_index,
-                //     x.cell().row_offset
-                //     );
-                //
-                // self.config.q.enable()
-
                 self.config.q.enable(&mut region, 0)?;
                 x.copy_advice(
                     || "assign x value to check u8 xor",

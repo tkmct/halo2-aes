@@ -2,10 +2,10 @@ use crate::{
     halo2_proofs::{
         circuit::{AssignedCell, Layouter},
         halo2curves::bn256::Fr as Fp,
-        plonk::{Advice, Column, ConstraintSystem, Error, Selector},
+        plonk::{Advice, Column, ConstraintSystem, Error, Selector, TableColumn},
         poly::Rotation,
     },
-    table::u8_xor::U8XorTableConfig,
+    table::Tag,
     utils::xor_bytes,
 };
 
@@ -33,7 +33,10 @@ impl U8XorChip {
         y_col: Column<Advice>,
         z_col: Column<Advice>,
         selector: Selector,
-        table_config: U8XorTableConfig,
+        tag_tab: TableColumn,
+        x_tab: TableColumn,
+        y_tab: TableColumn,
+        z_tab: TableColumn,
     ) -> U8XorConfig {
         meta.lookup("Check correct XOR of u8 values", |meta| {
             let q = meta.query_selector(selector);
@@ -42,9 +45,10 @@ impl U8XorChip {
             let z = meta.query_advice(z_col, Rotation::cur());
 
             vec![
-                (q.clone() * x, table_config.x),
-                (q.clone() * y, table_config.y),
-                (q * z, table_config.z),
+                (q.clone() * Fp::from(Tag::Xor as u64), tag_tab),
+                (q.clone() * x, x_tab),
+                (q.clone() * y, y_tab),
+                (q * z, z_tab),
             ]
         });
 
@@ -78,7 +82,6 @@ impl U8XorChip {
                     self.config.y,
                     0,
                 )?;
-
                 let z = region.assign_advice(
                     || "assign z value to check u8 xor",
                     self.config.z,

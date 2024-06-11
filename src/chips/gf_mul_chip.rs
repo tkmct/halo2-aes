@@ -1,15 +1,16 @@
 use crate::{
+    constant::{MUL_BY_2, MUL_BY_3},
     halo2_proofs::{
         circuit::{AssignedCell, Layouter},
         halo2curves::bn256::Fr as Fp,
-        plonk::{Advice, Column, ConstraintSystem, Error, Selector},
+        plonk::{Advice, Column, ConstraintSystem, Error, Selector, TableColumn},
         poly::Rotation,
     },
-    table::gf_mul::{PolyMulBy2TableConfig, PolyMulBy3TableConfig, MUL_BY_2, MUL_BY_3},
+    table::Tag,
 };
 
 macro_rules! define_mul_chip {
-    ($chip_name:ident, $config_name:ident, $table:ty, $dict:expr, $n:expr) => {
+    ($chip_name:ident, $config_name:ident, $table:ty, $dict:expr, $n:expr, $tag:expr) => {
         #[derive(Clone, Copy, Debug)]
         pub struct $config_name {
             x: Column<Advice>,
@@ -32,14 +33,20 @@ macro_rules! define_mul_chip {
                 x_col: Column<Advice>,
                 y_col: Column<Advice>,
                 selector: Selector,
-                table_config: $table,
+                tag_tab: TableColumn,
+                x_tab: TableColumn,
+                y_tab: TableColumn,
             ) -> $config_name {
                 meta.lookup("Check correct gf mul by $n", |meta| {
                     let q = meta.query_selector(selector);
                     let x = meta.query_advice(x_col, Rotation::cur());
                     let y = meta.query_advice(y_col, Rotation::cur());
 
-                    vec![(q.clone() * x, table_config.x), (q * y, table_config.y)]
+                    vec![
+                        (q.clone() * Fp::from($tag as u64), tag_tab),
+                        (q.clone() * x, x_tab),
+                        (q * y, y_tab),
+                    ]
                 });
 
                 $config_name {
@@ -84,5 +91,19 @@ macro_rules! define_mul_chip {
     };
 }
 
-define_mul_chip!(MulBy2Chip, MulBy2Config, PolyMulBy2TableConfig, MUL_BY_2, 2);
-define_mul_chip!(MulBy3Chip, MulBy3Config, PolyMulBy3TableConfig, MUL_BY_3, 3);
+define_mul_chip!(
+    MulBy2Chip,
+    MulBy2Config,
+    PolyMulBy2TableConfig,
+    MUL_BY_2,
+    2,
+    Tag::GfMul2
+);
+define_mul_chip!(
+    MulBy3Chip,
+    MulBy3Config,
+    PolyMulBy3TableConfig,
+    MUL_BY_3,
+    3,
+    Tag::GfMul3
+);

@@ -1,6 +1,6 @@
 use crate::{
+    constant::S_BOX,
     halo2_proofs::{circuit::Value, halo2curves::bn256::Fr as Fp},
-    table::s_box::S_BOX,
 };
 
 /// Calculate xor of given two bytes.

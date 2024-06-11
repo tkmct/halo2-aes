@@ -8,7 +8,7 @@ use halo2_aes::{
         halo2curves::bn256::{Bn256, Fr as Fp, G1Affine},
         plonk::{
             create_proof, keygen_pk, keygen_vk, Circuit, ConstraintSystem, Error, ProvingKey,
-            VerifyingKey,
+            TableColumn, VerifyingKey,
         },
         poly::kzg::{
             commitment::{KZGCommitmentScheme, ParamsKZG},
@@ -17,9 +17,7 @@ use halo2_aes::{
         transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer},
     },
     key_schedule::Aes128KeyScheduleConfig,
-    table::{
-        s_box::SboxTableConfig, u8_range_check::U8RangeCheckTableConfig, u8_xor::U8XorTableConfig,
-    },
+    table::load_enc_full_table,
 };
 use rand::rngs::OsRng;
 
@@ -30,48 +28,34 @@ struct Aes128KeyScheduleBenchCircuit {
     key: [u8; 16],
 }
 
-#[derive(Clone)]
-struct Tables {
-    pub u8_xor: U8XorTableConfig,
-    pub sbox: SboxTableConfig,
-    pub u8_range_check: U8RangeCheckTableConfig,
-}
-
 impl Circuit<Fp> for Aes128KeyScheduleBenchCircuit {
-    type Config = (Aes128KeyScheduleConfig, Tables);
+    type Config = (Aes128KeyScheduleConfig, [TableColumn; 4]);
     type FloorPlanner = SimpleFloorPlanner;
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
-        // We have table columns in  this config
-        let u8_xor_table_config = U8XorTableConfig::configure(meta);
-        let sbox_table_config = SboxTableConfig::configure(meta);
-        let u8_range_check_table_config = U8RangeCheckTableConfig::configure(meta);
-
         let advices = [
             meta.advice_column(),
             meta.advice_column(),
             meta.advice_column(),
         ];
+        let tables = [
+            meta.lookup_table_column(),
+            meta.lookup_table_column(),
+            meta.lookup_table_column(),
+            meta.lookup_table_column(),
+        ];
         let q_u8_range_check = meta.complex_selector();
         let q_u8_xor = meta.complex_selector();
         let q_sbox = meta.complex_selector();
-
-        let u8_range_check_config = U8RangeCheckChip::configure(
-            meta,
-            advices[0],
-            q_u8_range_check,
-            u8_range_check_table_config,
-        );
+        let u8_range_check_config =
+            U8RangeCheckChip::configure(meta, advices[0], q_u8_range_check, tables[0], tables[1]);
         let u8_xor_config = U8XorChip::configure(
-            meta,
-            advices[0],
-            advices[1],
-            advices[2],
-            q_u8_xor,
-            u8_xor_table_config,
+            meta, advices[0], advices[1], advices[2], q_u8_xor, tables[0], tables[1], tables[2],
+            tables[3],
         );
-        let sbox_config =
-            SboxChip::configure(meta, advices[0], advices[1], q_sbox, sbox_table_config);
+        let sbox_config = SboxChip::configure(
+            meta, advices[0], advices[1], q_sbox, tables[0], tables[1], tables[2],
+        );
 
         (
             Aes128KeyScheduleConfig::configure(
@@ -81,11 +65,7 @@ impl Circuit<Fp> for Aes128KeyScheduleBenchCircuit {
                 sbox_config,
                 u8_range_check_config,
             ),
-            Tables {
-                u8_range_check: u8_range_check_table_config,
-                u8_xor: u8_xor_table_config,
-                sbox: sbox_table_config,
-            },
+            tables,
         )
     }
 
@@ -94,9 +74,7 @@ impl Circuit<Fp> for Aes128KeyScheduleBenchCircuit {
         config: Self::Config,
         mut layouter: impl Layouter<Fp>,
     ) -> Result<(), Error> {
-        config.1.u8_range_check.load(&mut layouter)?;
-        config.1.u8_xor.load(&mut layouter)?;
-        config.1.sbox.load(&mut layouter)?;
+        load_enc_full_table(&mut layouter, config.1)?;
 
         config
             .0

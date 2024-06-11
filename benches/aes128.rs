@@ -17,6 +17,7 @@ use halo2_aes::{
         },
         transcript::{Blake2bWrite, Challenge255, TranscriptWriterBuffer},
     },
+    table::load_enc_full_table,
     FixedAes128Config,
 };
 use rand::rngs::OsRng;
@@ -44,12 +45,7 @@ impl Circuit<Fp> for Aes128BenchCircuit {
         mut config: Self::Config,
         mut layouter: impl Layouter<Fp>,
     ) -> Result<(), Error> {
-        config.u8_xor_table_config.load(&mut layouter)?;
-        config.sbox_table_config.load(&mut layouter)?;
-        config.u8_range_check_table_config.load(&mut layouter)?;
-        config.mul2_table_config.load(&mut layouter)?;
-        config.mul3_table_config.load(&mut layouter)?;
-
+        load_enc_full_table(&mut layouter, config.tables)?;
         config.schedule_key(&mut layouter, self.key)?;
         for i in 0..self.encrypt_num {
             config.encrypt(&mut layouter, self.plaintext)?;
@@ -98,7 +94,7 @@ fn prove_aes128_circuit(c: &mut Criterion) {
     let mut group = c.benchmark_group("prove AES128 encryption");
     group.sample_size(SAMPLE_SIZE);
 
-    for size in [1] {
+    for size in [100] {
         group.throughput(criterion::Throughput::Elements(size));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, s| {
             b.iter(|| {

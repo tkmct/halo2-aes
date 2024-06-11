@@ -8,15 +8,9 @@ use crate::{
     halo2_proofs::{
         circuit::{AssignedCell, Layouter, Value},
         halo2curves::bn256::Fr as Fp,
-        plonk::{Advice, Column, ConstraintSystem, Error},
+        plonk::{Advice, Column, ConstraintSystem, Error, TableColumn},
     },
     key_schedule::Aes128KeyScheduleConfig,
-    table::{
-        gf_mul::{PolyMulBy2TableConfig, PolyMulBy3TableConfig},
-        s_box::SboxTableConfig,
-        u8_range_check::U8RangeCheckTableConfig,
-        u8_xor::U8XorTableConfig,
-    },
 };
 
 #[derive(Clone, Debug)]
@@ -24,33 +18,29 @@ pub struct FixedAes128Config {
     keys: Option<Vec<Vec<AssignedCell<Fp, Fp>>>>,
 
     pub key_schedule_config: Aes128KeyScheduleConfig,
-    pub u8_xor_table_config: U8XorTableConfig,
-    pub u8_range_check_table_config: U8RangeCheckTableConfig,
-    pub sbox_table_config: SboxTableConfig,
-    pub mul2_table_config: PolyMulBy2TableConfig,
-    pub mul3_table_config: PolyMulBy3TableConfig,
-
     u8_range_check_config: U8RangeCheckConfig,
     u8_xor_config: U8XorConfig,
     sbox_config: SboxConfig,
     mul2_config: MulBy2Config,
     mul3_config: MulBy3Config,
 
-    advices: [Column<Advice>; 3],
+    pub advices: [Column<Advice>; 3],
+    pub tables: [TableColumn; 4],
 }
 
 impl FixedAes128Config {
     pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
-        let u8_xor_table_config = U8XorTableConfig::configure(meta);
-        let sbox_table_config = SboxTableConfig::configure(meta);
-        let u8_range_check_table_config = U8RangeCheckTableConfig::configure(meta);
-        let mul2_table_config = PolyMulBy2TableConfig::configure(meta);
-        let mul3_table_config = PolyMulBy3TableConfig::configure(meta);
-
         let advices = [
             meta.advice_column(),
             meta.advice_column(),
             meta.advice_column(),
+        ];
+        // First table_column is used as a tag column
+        let tables = [
+            meta.lookup_table_column(),
+            meta.lookup_table_column(),
+            meta.lookup_table_column(),
+            meta.lookup_table_column(),
         ];
         let q_u8_range_check = meta.complex_selector();
         let q_u8_xor = meta.complex_selector();
@@ -58,26 +48,21 @@ impl FixedAes128Config {
         let q_mul_by_2 = meta.complex_selector();
         let q_mul_by_3 = meta.complex_selector();
 
-        let u8_range_check_config = U8RangeCheckChip::configure(
-            meta,
-            advices[0],
-            q_u8_range_check,
-            u8_range_check_table_config,
-        );
+        let u8_range_check_config =
+            U8RangeCheckChip::configure(meta, advices[0], q_u8_range_check, tables[0], tables[1]);
         let u8_xor_config = U8XorChip::configure(
-            meta,
-            advices[0],
-            advices[1],
-            advices[2],
-            q_u8_xor,
-            u8_xor_table_config,
+            meta, advices[0], advices[1], advices[2], q_u8_xor, tables[0], tables[1], tables[2],
+            tables[3],
         );
-        let sbox_config =
-            SboxChip::configure(meta, advices[0], advices[1], q_sbox, sbox_table_config);
-        let mul2_config =
-            MulBy2Chip::configure(meta, advices[0], advices[1], q_mul_by_2, mul2_table_config);
-        let mul3_config =
-            MulBy3Chip::configure(meta, advices[0], advices[1], q_mul_by_3, mul3_table_config);
+        let sbox_config = SboxChip::configure(
+            meta, advices[0], advices[1], q_sbox, tables[0], tables[1], tables[2],
+        );
+        let mul2_config = MulBy2Chip::configure(
+            meta, advices[0], advices[1], q_mul_by_2, tables[0], tables[1], tables[2],
+        );
+        let mul3_config = MulBy3Chip::configure(
+            meta, advices[0], advices[1], q_mul_by_3, tables[0], tables[1], tables[2],
+        );
 
         let key_schedule_config = Aes128KeyScheduleConfig::configure(
             meta,
@@ -94,13 +79,8 @@ impl FixedAes128Config {
         Self {
             keys: None,
             key_schedule_config,
-            u8_xor_table_config,
-            u8_range_check_table_config,
-            sbox_table_config,
-            mul2_table_config,
-            mul3_table_config,
-
             advices,
+            tables,
             u8_range_check_config,
             u8_xor_config,
             sbox_config,
@@ -128,7 +108,7 @@ impl FixedAes128Config {
         // Prepare chips
         let xor_chip = U8XorChip::construct(self.u8_xor_config);
         let sbox_chip = SboxChip::construct(self.sbox_config);
-        let range_chip = U8RangeCheckChip::construct(self.u8_range_check_config);
+        let _range_chip = U8RangeCheckChip::construct(self.u8_range_check_config);
 
         let round_keys = self.keys.clone().expect("Keys should be scheduled");
 
@@ -225,9 +205,9 @@ impl FixedAes128Config {
         Ok(prev_round)
     }
 
-    pub fn decrypt(&self, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
-        todo!()
-    }
+    // pub fn decrypt(&self, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
+    //     todo!()
+    // }
 
     // Compute linear combination of word and given coefficients
     fn lcon(
@@ -269,11 +249,14 @@ impl FixedAes128Config {
 mod tests {
     use super::*;
 
-    use crate::halo2_proofs::{
-        circuit::{Layouter, SimpleFloorPlanner},
-        dev::MockProver,
-        halo2curves::bn256::Fr as Fp,
-        plonk::{Circuit, ConstraintSystem, Error},
+    use crate::{
+        halo2_proofs::{
+            circuit::{Layouter, SimpleFloorPlanner},
+            dev::MockProver,
+            halo2curves::bn256::Fr as Fp,
+            plonk::{Circuit, ConstraintSystem, Error},
+        },
+        table::load_enc_full_table,
     };
 
     #[derive(Clone)]
@@ -295,12 +278,7 @@ mod tests {
             mut config: Self::Config,
             mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
-            config.u8_xor_table_config.load(&mut layouter)?;
-            config.sbox_table_config.load(&mut layouter)?;
-            config.u8_range_check_table_config.load(&mut layouter)?;
-            config.mul2_table_config.load(&mut layouter)?;
-            config.mul3_table_config.load(&mut layouter)?;
-
+            load_enc_full_table(&mut layouter, config.tables)?;
             config.schedule_key(&mut layouter, self.key)?;
             // for i in 0..769 {
             // config.encrypt(&mut layouter, self.plaintext)?;

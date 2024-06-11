@@ -1,12 +1,18 @@
-//! This module contains config and constants used to achieve polynomial multiplication on GF(2^8)
-//! It is used to calculate MixColumns operations in AES encryption and decryption.
-//! These operations can be done using lookup tables with length 256.
-
-use crate::halo2_proofs::{
-    circuit::{Layouter, Value},
-    halo2curves::bn256::Fr as Fp,
-    plonk::{ConstraintSystem, Error, TableColumn},
-};
+pub const S_BOX: [u8; 256] = [
+    99, 124, 119, 123, 242, 107, 111, 197, 48, 1, 103, 43, 254, 215, 171, 118, 202, 130, 201, 125,
+    250, 89, 71, 240, 173, 212, 162, 175, 156, 164, 114, 192, 183, 253, 147, 38, 54, 63, 247, 204,
+    52, 165, 229, 241, 113, 216, 49, 21, 4, 199, 35, 195, 24, 150, 5, 154, 7, 18, 128, 226, 235,
+    39, 178, 117, 9, 131, 44, 26, 27, 110, 90, 160, 82, 59, 214, 179, 41, 227, 47, 132, 83, 209, 0,
+    237, 32, 252, 177, 91, 106, 203, 190, 57, 74, 76, 88, 207, 208, 239, 170, 251, 67, 77, 51, 133,
+    69, 249, 2, 127, 80, 60, 159, 168, 81, 163, 64, 143, 146, 157, 56, 245, 188, 182, 218, 33, 16,
+    255, 243, 210, 205, 12, 19, 236, 95, 151, 68, 23, 196, 167, 126, 61, 100, 93, 25, 115, 96, 129,
+    79, 220, 34, 42, 144, 136, 70, 238, 184, 20, 222, 94, 11, 219, 224, 50, 58, 10, 73, 6, 36, 92,
+    194, 211, 172, 98, 145, 149, 228, 121, 231, 200, 55, 109, 141, 213, 78, 169, 108, 86, 244, 234,
+    101, 122, 174, 8, 186, 120, 37, 46, 28, 166, 180, 198, 232, 221, 116, 31, 75, 189, 139, 138,
+    112, 62, 181, 102, 72, 3, 246, 14, 97, 53, 87, 185, 134, 193, 29, 158, 225, 248, 152, 17, 105,
+    217, 142, 148, 155, 30, 135, 233, 206, 85, 40, 223, 140, 161, 137, 13, 191, 230, 66, 104, 65,
+    153, 45, 15, 176, 84, 187, 23,
+];
 
 pub const MUL_BY_2: [u8; 256] = [
     0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48,
@@ -103,69 +109,3 @@ pub const MUL_BY_14: [u8; 256] = [
     37, 15, 1, 19, 29, 71, 73, 91, 85, 127, 113, 99, 109, 215, 217, 203, 197, 239, 225, 243, 253,
     167, 169, 187, 181, 159, 145, 131, 141,
 ];
-
-macro_rules! define_mul_table_config {
-    ($name:ident, $table:ident) => {
-        #[derive(Clone, Copy, Debug)]
-        pub struct $name {
-            pub x: TableColumn,
-            pub y: TableColumn,
-        }
-
-        impl $name {
-            pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
-                Self {
-                    x: meta.lookup_table_column(),
-                    y: meta.lookup_table_column(),
-                }
-            }
-
-            pub fn load(&self, layouter: &mut impl Layouter<Fp>) -> Result<(), Error> {
-                layouter.assign_table(
-                    || "load sbox table",
-                    |mut table| {
-                        for i in 0..256 {
-                            table.assign_cell(
-                                || "assign cell for mul input byte",
-                                self.x,
-                                i,
-                                || Value::known(Fp::from(i as u64)),
-                            )?;
-
-                            table.assign_cell(
-                                || "assign cell for mul output byte",
-                                self.y,
-                                i,
-                                || Value::known(Fp::from($table[i] as u64)),
-                            )?;
-                        }
-
-                        // Add (0,0) for not selected row
-                        table.assign_cell(
-                            || "assign cell for last",
-                            self.x,
-                            256,
-                            || Value::known(Fp::from(0)),
-                        )?;
-
-                        table.assign_cell(
-                            || "assign cell for last",
-                            self.y,
-                            256,
-                            || Value::known(Fp::from(0)),
-                        )?;
-
-                        Ok(())
-                    },
-                )
-            }
-        }
-    };
-}
-
-define_mul_table_config!(PolyMulBy2TableConfig, MUL_BY_2);
-define_mul_table_config!(PolyMulBy3TableConfig, MUL_BY_3);
-define_mul_table_config!(PolyMulBy9TableConfig, MUL_BY_9);
-define_mul_table_config!(PolyMulBy11TableConfig, MUL_BY_11);
-define_mul_table_config!(PolyMulBy13TableConfig, MUL_BY_13);
-define_mul_table_config!(PolyMulBy14TableConfig, MUL_BY_14);

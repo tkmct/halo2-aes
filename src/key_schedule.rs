@@ -28,7 +28,7 @@ pub struct Aes128KeyScheduleConfig {
     round_constants: Column<Fixed>,
 
     q_eq_rcon: Selector,
-    advices: [Column<Advice>; 3],
+    _advices: [Column<Advice>; 3],
 
     u8_range_check_config: U8RangeCheckConfig,
     u8_xor_config: U8XorConfig,
@@ -69,7 +69,7 @@ impl Aes128KeyScheduleConfig {
 
             q_eq_rcon,
 
-            advices,
+            _advices: advices,
             u8_range_check_config,
             u8_xor_config,
             sbox_config,
@@ -227,7 +227,6 @@ impl Aes128KeyScheduleConfig {
 #[cfg(test)]
 #[cfg(feature = "halo2-pse")]
 mod tests {
-
     use super::*;
 
     use crate::{
@@ -235,12 +234,9 @@ mod tests {
             circuit::{Layouter, SimpleFloorPlanner},
             dev::{CellValue, MockProver},
             halo2curves::bn256::Fr as Fp,
-            plonk::{Circuit, ConstraintSystem, Error},
+            plonk::{Circuit, ConstraintSystem, Error, TableColumn},
         },
-        table::{
-            s_box::SboxTableConfig, u8_range_check::U8RangeCheckTableConfig,
-            u8_xor::U8XorTableConfig,
-        },
+        table::load_enc_full_table,
     };
 
     #[derive(Clone)]
@@ -248,29 +244,24 @@ mod tests {
         key: [u8; 16],
     }
 
-    // Tables used by the whole circuit
-    #[derive(Clone)]
-    struct Tables {
-        pub u8_xor: U8XorTableConfig,
-        pub sbox: SboxTableConfig,
-        pub u8_range_check: U8RangeCheckTableConfig,
-    }
-
     impl Circuit<Fp> for TestCircuit {
-        type Config = (Aes128KeyScheduleConfig, Tables);
+        type Config = (Aes128KeyScheduleConfig, [TableColumn; 4]);
         type FloorPlanner = SimpleFloorPlanner;
 
         fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
             // We have table columns in  this config
-            let u8_xor_table_config = U8XorTableConfig::configure(meta);
-            let sbox_table_config = SboxTableConfig::configure(meta);
-            let u8_range_check_table_config = U8RangeCheckTableConfig::configure(meta);
-
             let advices = [
                 meta.advice_column(),
                 meta.advice_column(),
                 meta.advice_column(),
             ];
+            let tables = [
+                meta.lookup_table_column(),
+                meta.lookup_table_column(),
+                meta.lookup_table_column(),
+                meta.lookup_table_column(),
+            ];
+
             let q_u8_range_check = meta.complex_selector();
             let q_u8_xor = meta.complex_selector();
             let q_sbox = meta.complex_selector();
@@ -279,18 +270,16 @@ mod tests {
                 meta,
                 advices[0],
                 q_u8_range_check,
-                u8_range_check_table_config,
+                tables[0],
+                tables[1],
             );
             let u8_xor_config = U8XorChip::configure(
-                meta,
-                advices[0],
-                advices[1],
-                advices[2],
-                q_u8_xor,
-                u8_xor_table_config,
+                meta, advices[0], advices[1], advices[2], q_u8_xor, tables[0], tables[1],
+                tables[2], tables[3],
             );
-            let sbox_config =
-                SboxChip::configure(meta, advices[0], advices[1], q_sbox, sbox_table_config);
+            let sbox_config = SboxChip::configure(
+                meta, advices[0], advices[1], q_sbox, tables[0], tables[1], tables[2],
+            );
 
             (
                 Aes128KeyScheduleConfig::configure(
@@ -300,11 +289,7 @@ mod tests {
                     sbox_config,
                     u8_range_check_config,
                 ),
-                Tables {
-                    u8_range_check: u8_range_check_table_config,
-                    u8_xor: u8_xor_table_config,
-                    sbox: sbox_table_config,
-                },
+                tables,
             )
         }
 
@@ -313,11 +298,9 @@ mod tests {
             config: Self::Config,
             mut layouter: impl Layouter<Fp>,
         ) -> Result<(), Error> {
-            config.1.u8_range_check.load(&mut layouter)?;
-            config.1.u8_xor.load(&mut layouter)?;
-            config.1.sbox.load(&mut layouter)?;
-
-            let words = config
+            load_enc_full_table(&mut layouter, config.1)?;
+            // let words =
+            config
                 .0
                 .schedule_keys(&mut layouter.namespace(|| "AES128 schedule key"), self.key)?;
 

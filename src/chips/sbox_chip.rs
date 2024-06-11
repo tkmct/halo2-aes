@@ -2,10 +2,10 @@ use crate::{
     halo2_proofs::{
         circuit::{AssignedCell, Layouter},
         halo2curves::bn256::Fr as Fp,
-        plonk::{Advice, Column, ConstraintSystem, Error, Selector},
+        plonk::{Advice, Column, ConstraintSystem, Error, Selector, TableColumn},
         poly::Rotation,
     },
-    table::s_box::SboxTableConfig,
+    table::Tag,
     utils::sub_byte,
 };
 
@@ -31,14 +31,20 @@ impl SboxChip {
         x_col: Column<Advice>,
         y_col: Column<Advice>,
         selector: Selector,
-        table_config: SboxTableConfig,
+        tag_tab: TableColumn,
+        x_tab: TableColumn,
+        y_tab: TableColumn,
     ) -> SboxConfig {
         meta.lookup("Check correct Sbox substitution", |meta| {
             let q = meta.query_selector(selector);
             let x = meta.query_advice(x_col, Rotation::cur());
             let y = meta.query_advice(y_col, Rotation::cur());
 
-            vec![(q.clone() * x, table_config.x), (q * y, table_config.y)]
+            vec![
+                (q.clone() * Fp::from(Tag::Sbox as u64), tag_tab),
+                (q.clone() * x, x_tab),
+                (q * y, y_tab),
+            ]
         });
 
         SboxConfig {

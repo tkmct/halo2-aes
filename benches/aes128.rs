@@ -24,7 +24,7 @@ use rand::rngs::OsRng;
 use std::fs::File;
 
 const SAMPLE_SIZE: usize = 10;
-const K: u32 = 19;
+const K: u32 = 21;
 
 #[derive(Clone, Copy)]
 struct Aes128BenchCircuit {
@@ -34,7 +34,7 @@ struct Aes128BenchCircuit {
 }
 
 impl Circuit<Fp> for Aes128BenchCircuit {
-    type Config = FixedAes128Config<K, 1>;
+    type Config = FixedAes128Config<K, 4>;
     type FloorPlanner = SimpleFloorPlanner;
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
@@ -87,7 +87,7 @@ fn prove_aes128_circuit(_c: &mut Criterion) {
     let circuit = Aes128BenchCircuit {
         key: [0u8; 16],
         plaintext: [0u8; 16],
-        encrypt_num: 100,
+        encrypt_num: 6000,
     };
     let (params, pk, _) = setup_params(K, circuit.clone());
 

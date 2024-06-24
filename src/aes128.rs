@@ -306,17 +306,16 @@ impl<const K: u32, const N: usize> FixedAes128Config<K, N> {
             // Subtract key scheduling
             max_row -= KEY_SCHEDULE_ROWS;
         }
-        println!(
-            "Call: {}, Max_row: {}, self.count*AES_ROWS: {}",
-            self.count,
-            max_row,
-            self.count * AES_ROWS
-        );
+        // println!(
+        //     "Call: {}, Max_row: {}, self.count*AES_ROWS: {}",
+        //     self.count,
+        //     max_row,
+        //     self.count * AES_ROWS
+        // );
 
-        if max_row >= self.count * AES_ROWS {
+        if max_row >= self.count * AES_ROWS + AES_ROWS {
             return true;
         } else if self.current < N - 1 {
-            println!("Self.current: {}, N-1: {}", self.current, N - 1);
             self.current += 1;
             self.count = 0;
             return true;
@@ -371,7 +370,7 @@ mod tests {
         table::load_enc_full_table,
     };
 
-    const K: u32 = 19;
+    const K: u32 = 20;
 
     #[derive(Clone)]
     struct TestAesCircuit {
@@ -380,7 +379,7 @@ mod tests {
     }
 
     impl Circuit<Fp> for TestAesCircuit {
-        type Config = FixedAes128Config<K, 2>;
+        type Config = FixedAes128Config<K, 3>;
         type FloorPlanner = SimpleFloorPlanner;
 
         fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
@@ -395,7 +394,7 @@ mod tests {
             load_enc_full_table(&mut layouter, config.tables)?;
             config.schedule_key(&mut layouter, self.key)?;
 
-            for _ in 0..770 {
+            for _ in 0..1000 {
                 config.encrypt(&mut layouter, self.plaintext)?;
             }
 

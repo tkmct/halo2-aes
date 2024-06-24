@@ -5,6 +5,7 @@ use crate::{
         u8_range_check_chip::{U8RangeCheckChip, U8RangeCheckConfig},
         u8_xor_chip::{U8XorChip, U8XorConfig},
     },
+    constant::{AES_ROWS, KEY_SCHEDULE_ROWS},
     halo2_proofs::{
         circuit::{AssignedCell, Layouter, Value},
         halo2curves::bn256::Fr as Fp,
@@ -14,27 +15,35 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct FixedAes128Config {
+struct Configs(
+    Vec<U8RangeCheckConfig>,
+    Vec<U8XorConfig>,
+    Vec<SboxConfig>,
+    Vec<MulBy2Config>,
+    Vec<MulBy3Config>,
+);
+
+#[derive(Clone, Debug)]
+pub struct FixedAes128Config<const K: u32, const N: usize> {
     keys: Option<Vec<Vec<AssignedCell<Fp, Fp>>>>,
 
     pub key_schedule_config: Aes128KeyScheduleConfig,
-    u8_range_check_config: U8RangeCheckConfig,
-    u8_xor_config: U8XorConfig,
-    sbox_config: SboxConfig,
-    mul2_config: MulBy2Config,
-    mul3_config: MulBy3Config,
 
-    pub advices: [Column<Advice>; 3],
+    configs: Configs,
+    pub advices: [[Column<Advice>; 3]; N],
     pub tables: [TableColumn; 4],
+
+    // Indicate which columns are currently used.
+    // increment this by one once the available cells of advices[i][0]
+    // is less than 1360
+    current: usize,
+
+    // Count number of AES calls
+    count: u64,
 }
 
-impl FixedAes128Config {
+impl<const K: u32, const N: usize> FixedAes128Config<K, N> {
     pub fn configure(meta: &mut ConstraintSystem<Fp>) -> Self {
-        let advices = [
-            meta.advice_column(),
-            meta.advice_column(),
-            meta.advice_column(),
-        ];
         // First table_column is used as a tag column
         let tables = [
             meta.lookup_table_column(),
@@ -42,38 +51,82 @@ impl FixedAes128Config {
             meta.lookup_table_column(),
             meta.lookup_table_column(),
         ];
-        let q_u8_range_check = meta.complex_selector();
-        let q_u8_xor = meta.complex_selector();
-        let q_sbox = meta.complex_selector();
-        let q_mul_by_2 = meta.complex_selector();
-        let q_mul_by_3 = meta.complex_selector();
+        let advices = std::array::from_fn(|_| {
+            [
+                meta.advice_column(),
+                meta.advice_column(),
+                meta.advice_column(),
+            ]
+        });
+        let mut configs = Configs(vec![], vec![], vec![], vec![], vec![]);
 
-        let u8_range_check_config =
-            U8RangeCheckChip::configure(meta, advices[0], q_u8_range_check, tables[0], tables[1]);
-        let u8_xor_config = U8XorChip::configure(
-            meta, advices[0], advices[1], advices[2], q_u8_xor, tables[0], tables[1], tables[2],
-            tables[3],
-        );
-        let sbox_config = SboxChip::configure(
-            meta, advices[0], advices[1], q_sbox, tables[0], tables[1], tables[2],
-        );
-        let mul2_config = MulBy2Chip::configure(
-            meta, advices[0], advices[1], q_mul_by_2, tables[0], tables[1], tables[2],
-        );
-        let mul3_config = MulBy3Chip::configure(
-            meta, advices[0], advices[1], q_mul_by_3, tables[0], tables[1], tables[2],
-        );
+        for i in 0..N {
+            let q_u8_range_check = meta.complex_selector();
+            let q_u8_xor = meta.complex_selector();
+            let q_sbox = meta.complex_selector();
+            let q_mul_by_2 = meta.complex_selector();
+            let q_mul_by_3 = meta.complex_selector();
 
+            configs.0.push(U8RangeCheckChip::configure(
+                meta,
+                advices[i][0],
+                q_u8_range_check,
+                tables[0],
+                tables[1],
+            ));
+            configs.1.push(U8XorChip::configure(
+                meta,
+                advices[i][0],
+                advices[i][1],
+                advices[i][2],
+                q_u8_xor,
+                tables[0],
+                tables[1],
+                tables[2],
+                tables[3],
+            ));
+            configs.2.push(SboxChip::configure(
+                meta,
+                advices[i][0],
+                advices[i][1],
+                q_sbox,
+                tables[0],
+                tables[1],
+                tables[2],
+            ));
+            configs.3.push(MulBy2Chip::configure(
+                meta,
+                advices[i][0],
+                advices[i][1],
+                q_mul_by_2,
+                tables[0],
+                tables[1],
+                tables[2],
+            ));
+            configs.4.push(MulBy3Chip::configure(
+                meta,
+                advices[i][0],
+                advices[i][1],
+                q_mul_by_3,
+                tables[0],
+                tables[1],
+                tables[2],
+            ));
+        }
+
+        // Setup key scheduling config with initial configs
         let key_schedule_config = Aes128KeyScheduleConfig::configure(
             meta,
-            advices,
-            u8_xor_config,
-            sbox_config,
-            u8_range_check_config,
+            advices[0],
+            configs.1[0],
+            configs.2[0],
+            configs.0[0],
         );
 
-        advices.iter().for_each(|advice| {
-            meta.enable_equality(*advice);
+        advices.iter().for_each(|v| {
+            v.iter().for_each(|v| {
+                meta.enable_equality(*v);
+            })
         });
 
         Self {
@@ -81,11 +134,9 @@ impl FixedAes128Config {
             key_schedule_config,
             advices,
             tables,
-            u8_range_check_config,
-            u8_xor_config,
-            sbox_config,
-            mul2_config,
-            mul3_config,
+            configs,
+            current: 0,
+            count: 0,
         }
     }
 
@@ -105,12 +156,20 @@ impl FixedAes128Config {
         layouter: &mut impl Layouter<Fp>,
         plaintext: [u8; 16],
     ) -> Result<Vec<AssignedCell<Fp, Fp>>, Error> {
+        // Check if available rows of advice[0] is more than 1360
+        if !self.aes_callable() {
+            panic!("AES calls too many. doesn't fit in the rows")
+        }
+        self.count += 1;
+
         // Prepare chips
-        let xor_chip = U8XorChip::construct(self.u8_xor_config);
-        let sbox_chip = SboxChip::construct(self.sbox_config);
-        let _range_chip = U8RangeCheckChip::construct(self.u8_range_check_config);
+        let xor_chip = U8XorChip::construct(self.xor_config());
+        let sbox_chip = SboxChip::construct(self.sbox_config());
+        let _range_chip = U8RangeCheckChip::construct(self.range_config());
 
         let round_keys = self.keys.clone().expect("Keys should be scheduled");
+
+        let advices = self.get_advices();
 
         // TODO: decide if open the plaintext as instance
         // Assign 16 bytes in cells
@@ -123,7 +182,7 @@ impl FixedAes128Config {
                     .map(|(i, &p)| {
                         region.assign_advice(
                             || "Assign plaintext",
-                            self.advices[0],
+                            advices[0],
                             i,
                             || Value::known(Fp::from(p as u64)),
                         )
@@ -205,10 +264,6 @@ impl FixedAes128Config {
         Ok(prev_round)
     }
 
-    // pub fn decrypt(&self, mut layouter: impl Layouter<Fp>) -> Result<(), Error> {
-    //     todo!()
-    // }
-
     // Compute linear combination of word and given coefficients
     fn lcon(
         &mut self,
@@ -216,9 +271,10 @@ impl FixedAes128Config {
         word: &Vec<AssignedCell<Fp, Fp>>,
         coeffs: &Vec<u32>,
     ) -> Result<AssignedCell<Fp, Fp>, Error> {
-        let xor_chip = U8XorChip::construct(self.u8_xor_config);
-        let mul2_chip = MulBy2Chip::construct(self.mul2_config);
-        let mul3_chip = MulBy3Chip::construct(self.mul3_config);
+        let xor_chip = U8XorChip::construct(self.xor_config());
+        let mul2_chip = MulBy2Chip::construct(self.mul2_config());
+        let mul3_chip = MulBy3Chip::construct(self.mul3_config());
+        let advices = self.get_advices();
 
         let tmp = word
             .iter()
@@ -229,7 +285,7 @@ impl FixedAes128Config {
                         || "",
                         |mut region| {
                             // just copy advice from word
-                            byte.copy_advice(|| "Copy mul by 1", &mut region, self.advices[0], 0)
+                            byte.copy_advice(|| "Copy mul by 1", &mut region, advices[0], 0)
                         },
                     )
                 }
@@ -242,6 +298,62 @@ impl FixedAes128Config {
         let inter_1 = xor_chip.xor(layouter, &tmp[0], &tmp[1])?;
         let inter_2 = xor_chip.xor(layouter, &tmp[2], &tmp[3])?;
         xor_chip.xor(layouter, &inter_1, &inter_2)
+    }
+
+    fn aes_callable(&mut self) -> bool {
+        let mut max_row = u64::pow(2, K);
+        if self.current == 0 {
+            // Subtract key scheduling
+            max_row -= KEY_SCHEDULE_ROWS;
+        }
+        println!(
+            "Call: {}, Max_row: {}, self.count*AES_ROWS: {}",
+            self.count,
+            max_row,
+            self.count * AES_ROWS
+        );
+
+        if max_row >= self.count * AES_ROWS {
+            return true;
+        } else if self.current < N - 1 {
+            println!("Self.current: {}, N-1: {}", self.current, N - 1);
+            self.current += 1;
+            self.count = 0;
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    // Config getters
+    fn range_config(&self) -> U8RangeCheckConfig {
+        assert!(self.current < N);
+        self.configs.0[self.current]
+    }
+
+    fn xor_config(&self) -> U8XorConfig {
+        assert!(self.current < N);
+        self.configs.1[self.current]
+    }
+
+    fn sbox_config(&self) -> SboxConfig {
+        assert!(self.current < N);
+        self.configs.2[self.current]
+    }
+
+    fn mul2_config(&self) -> MulBy2Config {
+        assert!(self.current < N);
+        self.configs.3[self.current]
+    }
+
+    fn mul3_config(&self) -> MulBy3Config {
+        assert!(self.current < N);
+        self.configs.4[self.current]
+    }
+
+    fn get_advices(&self) -> &[Column<Advice>] {
+        assert!(self.current < N);
+        &self.advices[self.current]
     }
 }
 
@@ -259,6 +371,8 @@ mod tests {
         table::load_enc_full_table,
     };
 
+    const K: u32 = 19;
+
     #[derive(Clone)]
     struct TestAesCircuit {
         key: [u8; 16],
@@ -266,7 +380,7 @@ mod tests {
     }
 
     impl Circuit<Fp> for TestAesCircuit {
-        type Config = FixedAes128Config;
+        type Config = FixedAes128Config<K, 2>;
         type FloorPlanner = SimpleFloorPlanner;
 
         fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
@@ -280,13 +394,10 @@ mod tests {
         ) -> Result<(), Error> {
             load_enc_full_table(&mut layouter, config.tables)?;
             config.schedule_key(&mut layouter, self.key)?;
-            // for i in 0..769 {
-            // config.encrypt(&mut layouter, self.plaintext)?;
-            // }
-            let val = config.encrypt(&mut layouter, self.plaintext)?;
-            val.iter().for_each(|cell| {
-                println!(" {:?}", cell.value());
-            });
+
+            for _ in 0..770 {
+                config.encrypt(&mut layouter, self.plaintext)?;
+            }
 
             Ok(())
         }
@@ -299,38 +410,35 @@ mod tests {
     #[test]
     #[cfg(feature = "halo2-pse")]
     fn test_correct_encryption() {
-        let k = 20;
         let circuit = TestAesCircuit {
             key: [0u8; 16],
             plaintext: [0u8; 16],
         };
 
-        let mock = MockProver::run(k, &circuit, vec![]).unwrap();
+        let mock = MockProver::run(K, &circuit, vec![]).unwrap();
         mock.assert_satisfied();
 
-        // Expected ciphertext
-        {
-            use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
-            use aes::Aes128;
+        // Print expected ciphertext
+        // {
+        //     use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+        //     use aes::Aes128;
 
-            let key = GenericArray::from([0u8; 16]);
-            let mut block = GenericArray::from([0u8; 16]);
+        //     let key = GenericArray::from([0u8; 16]);
+        //     let mut block = GenericArray::from([0u8; 16]);
 
-            // Initialize cipher
-            let cipher = Aes128::new(&key);
-            cipher.encrypt_block(&mut block);
-            block.iter().for_each(|v| {
-                println!("{:02X?}", v);
-            });
-        }
+        //     // Initialize cipher
+        //     let cipher = Aes128::new(&key);
+        //     cipher.encrypt_block(&mut block);
+        //     block.iter().for_each(|v| {
+        //         println!("{:02X?}", v);
+        //     });
+        // }
     }
 
     #[cfg(feature = "dev-graph")]
     #[test]
     fn print_aes_encrypt() {
         use plotters::prelude::*;
-
-        let k = 20;
         let circuit = TestAesCircuit {
             key: [0u8; 16],
             plaintext: [0u8; 16],
@@ -344,7 +452,7 @@ mod tests {
             .unwrap();
 
         halo2_proofs::dev::CircuitLayout::default()
-            .render(k, &circuit, &root)
+            .render(K, &circuit, &root)
             .unwrap();
     }
 
@@ -352,15 +460,13 @@ mod tests {
     #[test]
     fn cost_estimate_aes_encrypt() {
         use halo2_proofs::dev::cost_model::{from_circuit_to_model_circuit, CommitmentScheme};
-
-        let k = 20;
         let circuit = TestAesCircuit {
             key: [0u8; 16],
             plaintext: [0u8; 16],
         };
 
         let model = from_circuit_to_model_circuit::<_, _, 56, 56>(
-            k,
+            K,
             &circuit,
             vec![],
             CommitmentScheme::KZGGWC,

@@ -1,5 +1,4 @@
 use ark_std::{end_timer, start_timer};
-use criterion::{criterion_group, criterion_main, Criterion};
 use halo2_aes::{
     halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
@@ -23,7 +22,6 @@ use halo2_aes::{
 use rand::rngs::OsRng;
 use std::fs::File;
 
-const SAMPLE_SIZE: usize = 10;
 const K: u32 = 20;
 
 #[derive(Clone, Copy)]
@@ -34,7 +32,7 @@ struct Aes128BenchCircuit {
 }
 
 impl Circuit<Fp> for Aes128BenchCircuit {
-    type Config = FixedAes128Config<K, 5>;
+    type Config = FixedAes128Config<K, 4>;
     type FloorPlanner = SimpleFloorPlanner;
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
@@ -82,38 +80,29 @@ fn setup_params<C: Circuit<Fp>>(
     (params, pk, vk)
 }
 
-fn prove_aes128_circuit(_c: &mut Criterion) {
-    let mut criterion = Criterion::default().sample_size(SAMPLE_SIZE);
+fn main() {
     let circuit = Aes128BenchCircuit {
         key: [0u8; 16],
         plaintext: [0u8; 16],
-        encrypt_num: 6000,
+        encrypt_num: 3000,
     };
     let (params, pk, _) = setup_params(K, circuit.clone());
 
-    criterion.bench_function("Prove AES encryption", |b| {
-        b.iter(|| {
-            let tm = start_timer!(|| "Generating proof");
-            let mut transcript =
-                Blake2bWrite::<Vec<u8>, G1Affine, Challenge255<G1Affine>>::init(vec![]);
+    let tm = start_timer!(|| "Prove: AES encrypt start");
+    let mut transcript = Blake2bWrite::<Vec<u8>, G1Affine, Challenge255<G1Affine>>::init(vec![]);
 
-            let result = create_proof::<
-                KZGCommitmentScheme<Bn256>,
-                ProverSHPLONK<'_, Bn256>,
-                Challenge255<G1Affine>,
-                _,
-                _,
-                _,
-            >(&params, &pk, &[circuit], &[&[]], OsRng, &mut transcript);
-            println!("Error: {:?}", result);
-            if result.is_err() {
-                panic!("Create proof fail");
-            }
+    let result = create_proof::<
+        KZGCommitmentScheme<Bn256>,
+        ProverSHPLONK<'_, Bn256>,
+        Challenge255<G1Affine>,
+        _,
+        _,
+        _,
+    >(&params, &pk, &[circuit], &[&[]], OsRng, &mut transcript);
+    end_timer!(tm);
 
-            end_timer!(tm);
-        });
-    });
+    println!("Error: {:?}", result);
+    if result.is_err() {
+        panic!("Create proof fail");
+    }
 }
-
-criterion_group!(benches, prove_aes128_circuit);
-criterion_main!(benches);

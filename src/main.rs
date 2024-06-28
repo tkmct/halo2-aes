@@ -1,3 +1,4 @@
+use ark_std::{end_timer, start_timer};
 use halo2_aes::{
     halo2_proofs::{
         circuit::{Layouter, SimpleFloorPlanner},
@@ -31,7 +32,7 @@ struct Aes128BenchCircuit {
 }
 
 impl Circuit<Fp> for Aes128BenchCircuit {
-    type Config = FixedAes128Config<K, 6>;
+    type Config = FixedAes128Config<K, 4>;
     type FloorPlanner = SimpleFloorPlanner;
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
@@ -83,10 +84,11 @@ fn main() {
     let circuit = Aes128BenchCircuit {
         key: [0u8; 16],
         plaintext: [0u8; 16],
-        encrypt_num: 4000,
+        encrypt_num: 3000,
     };
     let (params, pk, _) = setup_params(K, circuit.clone());
 
+    let tm = start_timer!(|| "Prove: AES encrypt start");
     let mut transcript = Blake2bWrite::<Vec<u8>, G1Affine, Challenge255<G1Affine>>::init(vec![]);
 
     let result = create_proof::<
@@ -97,6 +99,8 @@ fn main() {
         _,
         _,
     >(&params, &pk, &[circuit], &[&[]], OsRng, &mut transcript);
+    end_timer!(tm);
+
     println!("Error: {:?}", result);
     if result.is_err() {
         panic!("Create proof fail");

@@ -34,7 +34,7 @@ struct Aes128BenchCircuit {
 }
 
 impl Circuit<Fp> for Aes128BenchCircuit {
-    type Config = FixedAes128Config<K, 8>;
+    type Config = FixedAes128Config<K, 5>;
     type FloorPlanner = SimpleFloorPlanner;
 
     fn configure(meta: &mut ConstraintSystem<Fp>) -> Self::Config {
